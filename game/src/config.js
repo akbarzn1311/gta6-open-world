@@ -1,179 +1,270 @@
-// Port Verona — shared configuration: city layout, story missions, weapons,
-// vehicles, garage upgrades and radio stations. Pure data, no side effects,
-// so the judge's source outline reads like a design document.
-// City: an original fictional city. Nothing here is copied from any
-// commercial game: all names, characters and places are invented.
-//
-// Version 1.1 (rewritten in the recorded session): same content, plus the
-// VERSION stamp the HUD and the dossier use to tell builds apart.
-export const VERSION = '1.1';
+// Port Verona v2 — game configuration and data.
+// Every number, name and story beat below is original to this game.
+// The module only holds data and a small seeded random helper; it touches
+// no DOM and no three.js, so the Node smoke test can load it on its own.
+(function () {
+  'use strict';
+  var PV = (window.PV = window.PV || {});
 
-export const CITY = {
-  name: 'Port Verona',
-  // Playable ground, in world units (1 unit ~ 1 m). Blocks are 40 units,
-  // roads 14 units wide, so the city reads as a real street grid.
-  // The road grid (n=4 in world.js) reaches ±216, inside this bound.
-  halfSize: 240,
-  block: 40,
-  road: 14,
-  // Golden-hour start: 17:30, so the first frame already has the
-  // dramatic low sun the screenshots are taken in.
-  startHour: 17.5,
-  dayLengthSec: 480,
-};
+  PV.VERSION = '2.0';
+  PV.GAME_TITLE = 'Port Verona';
+  PV.SAVE_KEY = 'port-verona-v2-save';
 
-export const PLAYER = {
-  walkSpeed: 7,
-  runSpeed: 11,
-  health: 100,
-  armor: 0,
-};
+  // Seeded random: deterministic world and shot staging from a seed.
+  PV.mulberry32 = function (seed) {
+    var a = seed >>> 0;
+    return function () {
+      a |= 0; a = (a + 0x6d2b79f5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
 
-// weapon: damage per hit, range, fire interval, ammo, whether it is
-// unlocked from the start or gated behind respect.
-export const WEAPONS = {
-  fists: { name: 'Fists', damage: 12, range: 2.2, rate: 0.45, ammo: Infinity, melee: true, respect: 0 },
-  pistol: { name: 'Pistol', damage: 22, range: 55, rate: 0.32, ammo: 120, melee: false, respect: 0 },
-  smg: { name: 'SMG', damage: 14, range: 45, rate: 0.09, ammo: 240, melee: false, respect: 15 },
-  shotgun: { name: 'Shotgun', damage: 65, range: 22, rate: 0.9, ammo: 48, melee: false, respect: 30 },
-  rifle: { name: 'Rifle', damage: 45, range: 90, rate: 0.14, ammo: 180, melee: false, respect: 50 },
-};
-export const WEAPON_ORDER = ['fists', 'pistol', 'smg', 'shotgun', 'rifle'];
+  PV.clamp = function (v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; };
+  PV.lerp = function (a, b, t) { return a + (b - a) * t; };
+  PV.pick = function (rng, arr) { return arr[Math.floor(rng() * arr.length)]; };
 
-export const VEHICLE_TYPES = {
-  sedan: { name: 'Verona Sedan', topSpeed: 34, accel: 16, grip: 1.0, color: 0x3a6ea5, price: 0 },
-  coupe: { name: 'Aurelia Coupe', topSpeed: 44, accel: 20, grip: 1.05, color: 0xc23b2e, price: 1200 },
-  taxi: { name: 'Harbor Taxi', topSpeed: 30, accel: 14, grip: 0.95, color: 0xe8b90c, price: 0 },
-  van: { name: 'Dock Van', topSpeed: 26, accel: 11, grip: 0.9, color: 0x7a7f85, price: 0 },
-  police: { name: 'VCPD Interceptor', topSpeed: 46, accel: 22, grip: 1.1, color: 0x1c2f6e, price: 0 },
-  muscle: { name: 'Tempest Muscle', topSpeed: 40, accel: 18, grip: 0.95, color: 0x5a2e7a, price: 2500 },
-};
+  // ---------------------------------------------------------------- city
+  PV.CITY = {
+    blocks: 9,            // blocks across, per axis
+    pitch: 48,            // distance between street centre lines
+    block: 34,            // building block width
+    street: 14,           // street width
+    half: 216,            // playable half-extent, metres
+    roadY: 0.02
+  };
 
-// garage upgrades: each tier is bought with money and gated by respect,
-// and every tier changes how the car actually drives (not a cosmetic number).
-export const GARAGE_UPGRADES = {
-  engine: [
-    { tier: 1, name: 'Tuned Intake', price: 400, respect: 5, topSpeed: 1.12, accel: 1.15 },
-    { tier: 2, name: 'Street Turbo', price: 1200, respect: 20, topSpeed: 1.25, accel: 1.35 },
-    { tier: 3, name: 'Race Supercharger', price: 3000, respect: 45, topSpeed: 1.45, accel: 1.6 },
-  ],
-  armor: [
-    { tier: 1, name: 'Reinforced Panels', price: 350, respect: 5, hp: 1.5 },
-    { tier: 2, name: 'Armored Frame', price: 1000, respect: 20, hp: 2.2 },
-    { tier: 3, name: 'Bulletproof Shell', price: 2600, respect: 45, hp: 3.2 },
-  ],
-  paint: [
-    { tier: 1, name: 'Sunset Gold', price: 150, respect: 0, color: 0xe8a13a },
-    { tier: 2, name: 'Midnight Teal', price: 300, respect: 10, color: 0x0f6f6a },
-    { tier: 3, name: 'Verona Purple', price: 600, respect: 25, color: 0x6a1fb0 },
-  ],
-};
+  PV.DISTRICTS = [
+    { name: 'Sunset Quay', x0: -216, z0: 96, x1: 216, z1: 216 },
+    { name: 'Paseo del Mar', x0: -216, z0: -48, x1: 216, z1: 96 },
+    { name: 'Alto Vista', x0: -216, z0: -216, x1: 0, z1: -48 },
+    { name: 'Harbor Docks', x0: 0, z0: -216, x1: 216, z1: -48 }
+  ];
 
-// The story of Port Verona: Mara Voss, a courier who owes the wrong people
-// money, climbs from errand runner to the person who owns the harbor.
-// Each mission has a giver, dialogue, typed steps and a real reward.
-export const MISSIONS = [
-  {
-    id: 1, title: 'First Fare', giver: 'Dario — Harbor Fixer',
-    intro: 'Dario: "Mara. You owe the harbor crew two grand. Drive this package to the pier and maybe I forget the interest."',
-    steps: [
-      { type: 'goto', text: 'Drive to the Sunset Pier drop-off', target: { x: 150, z: 150 }, radius: 8 },
-      { type: 'talk', text: 'Hand the package to the dock contact', target: { x: 150, z: 150 }, radius: 8 },
-    ],
-    reward: { money: 250, respect: 5 },
-  },
-  {
-    id: 2, title: 'Hot Wheels', giver: 'Dario — Harbor Fixer',
-    intro: 'Dario: "A coupe is sitting unlocked by the Grand Plaza. Bring it to the garage — no police, no scratches, no questions."',
-    steps: [
-      { type: 'goto', text: 'Reach the Aurelia Coupe at Grand Plaza', target: { x: 20, z: -20 }, radius: 8 },
-      { type: 'steal', text: 'Take the coupe (press E near it)', target: { x: 20, z: -20 }, radius: 8 },
-      { type: 'goto', text: 'Deliver the coupe to the garage', target: { x: -120, z: 60 }, radius: 9 },
-    ],
-    reward: { money: 400, respect: 8 },
-  },
-  {
-    id: 3, title: 'Pay the Piper', giver: 'Mara Voss',
-    intro: 'Mara: "The debt collectors are shaking down my cousin at the market. Go remind them whose streets these are."',
-    steps: [
-      { type: 'goto', text: 'Reach the market square', target: { x: -60, z: -100 }, radius: 8 },
-      { type: 'fight', text: 'Deal with the 3 collectors', target: { x: -60, z: -100 }, radius: 14, count: 3 },
-    ],
-    reward: { money: 350, respect: 10 },
-  },
-  {
-    id: 4, title: 'Night Run', giver: 'Lena — Night Dispatcher',
-    intro: 'Lena: "A client needs a courier after dark. Fast, quiet, and the VCPD cannot see you. Two stars and the deal is dead."',
-    steps: [
-      { type: 'goto', text: 'Pick up the parcel at the stadium', target: { x: 120, z: -120 }, radius: 8 },
-      { type: 'deliver', text: 'Deliver it to the north gate before the heat rises', target: { x: -20, z: -160 }, radius: 8 },
-    ],
-    reward: { money: 600, respect: 10 },
-  },
-  {
-    id: 5, title: 'The Race', giver: 'Rook — Street Racer',
-    intro: 'Rook: "You talk fast, Mara. Prove it. Beat my crew through the downtown loop and the respect is yours."',
-    steps: [
-      { type: 'race', text: 'Win the downtown street race', target: { x: 0, z: 0 }, radius: 0 },
-    ],
-    reward: { money: 900, respect: 15 },
-  },
-  {
-    id: 6, title: 'Storm Warning', giver: 'Dario — Harbor Fixer',
-    intro: 'Dario: "Rain is coming and the harbor shipment moves tonight. Escort the van through the storm — the VCPD loves a rainy bust."',
-    steps: [
-      { type: 'escort', text: 'Escort the dock van to the warehouse', target: { x: -150, z: 120 }, radius: 10 },
-    ],
-    reward: { money: 800, respect: 12 },
-  },
-  {
-    id: 7, title: 'Heat Wave', giver: 'Mara Voss',
-    intro: 'Mara: "They put a price on my head. Survive the heat, lose the tail, and make it to the safehouse alive."',
-    steps: [
-      { type: 'escape', text: 'Survive and lose your wanted level', target: { x: 60, z: 120 }, radius: 10 },
-    ],
-    reward: { money: 1000, respect: 15 },
-  },
-  {
-    id: 8, title: 'The Informant', giver: 'Lena — Night Dispatcher',
-    intro: 'Lena: "An informant is talking to the VCPD at the plaza. Silence him before he names names — quietly."',
-    steps: [
-      { type: 'goto', text: 'Reach the informant at Grand Plaza', target: { x: 20, z: -20 }, radius: 8 },
-      { type: 'fight', text: 'Silence the informant and his 2 guards', target: { x: 20, z: -20 }, radius: 14, count: 3 },
-    ],
-    reward: { money: 1100, respect: 15 },
-  },
-  {
-    id: 9, title: 'Harbor Heist', giver: 'Dario — Harbor Fixer',
-    intro: 'Dario: "The big one. A vault truck crosses the Harbor Bridge at dusk. Take it, lose the VCPD, bring it home."',
-    steps: [
-      { type: 'goto', text: 'Intercept the vault truck on the bridge', target: { x: 150, z: 0 }, radius: 10 },
-      { type: 'steal', text: 'Take the vault truck (press E near it)', target: { x: 150, z: 0 }, radius: 10 },
-      { type: 'escape', text: 'Lose the heat and reach the garage', target: { x: -120, z: 60 }, radius: 10 },
-    ],
-    reward: { money: 2500, respect: 20 },
-  },
-  {
-    id: 10, title: 'Queen of the Harbor', giver: 'Mara Voss',
-    intro: 'Mara: "Tonight I stop owing people. The crew that owns this harbor meets at the tower — I am going to take the harbor from them."',
-    steps: [
-      { type: 'goto', text: 'Reach Verona Tower', target: { x: 0, z: -160 }, radius: 10 },
-      { type: 'fight', text: 'Take down the 5 harbor enforcers', target: { x: 0, z: -160 }, radius: 16, count: 5 },
-      { type: 'goto', text: 'Claim the rooftop — the harbor is yours', target: { x: 0, z: -160 }, radius: 8 },
-    ],
-    reward: { money: 5000, respect: 40 },
-  },
-];
+  // Named places the missions and the HUD refer to. Coordinates are metres
+  // in world space (x east, z south); the pier sits past the south edge.
+  PV.PLACES = {
+    plaza:    { x: 0,    z: 0,    name: 'Fountain Plaza' },
+    pier:     { x: 0,    z: 205,  name: 'The Old Pier' },
+    arch:     { x: 0,    z: -48,  name: 'Sol Arch' },
+    garage:   { x: -144, z: 96,   name: "Gus's Spray & Tune" },
+    tower:    { x: 144,  z: -144, name: 'Meridian Tower' },
+    warehouse:{ x: 144,  z: 96,   name: 'Harbor Warehouse' },
+    market:   { x: -96,  z: -96,  name: 'Mercado Norte' },
+    beach:    { x: -168, z: 192,  name: 'Coral Beach' }
+  };
 
-// Radio stations: all music is synthesized live with WebAudio, so the
-// game stays 100% offline — no audio files are shipped at all.
-export const RADIO_STATIONS = [
-  { name: 'Sunset FM', desc: 'Chill chords', tempo: 76, root: 57, scale: [0, 3, 5, 7, 10], wave: 'sine' },
-  { name: 'Verona Rock', desc: 'Driving riff', tempo: 132, root: 40, scale: [0, 3, 5, 6, 7, 10], wave: 'square' },
-  { name: 'Harbor Beats', desc: 'Night bass', tempo: 104, root: 36, scale: [0, 2, 3, 5, 7, 8, 10], wave: 'sawtooth' },
-];
+  PV.STREET_NAMES = [
+    'Paseo del Mar', 'Sunset Quay', 'Avenida Coral', 'Calle Brisa',
+    'Boulevard Aurora', 'Calle Coral', 'Avenida Palma', 'Calle Loma'
+  ];
 
-export const NPC_NAMES = ['Tomas', 'Priya', 'Jonas', 'Aisha', 'Marco', 'Lena', 'Rook', 'Sofia', 'Dante', 'Iris', 'Kofi', 'Nadia'];
-export const GARAGE_POS = { x: -120, z: 60 };
-export const SPAWN_POS = { x: 0, z: 40 };
-export const TOWER_POS = { x: 0, z: -160 };
+  PV.NEON_SIGNS = ['HOTEL', 'BAR', '24H', 'TACOS', 'CINE', 'PIER', 'CLUB', 'CAFE', 'MOTO', 'SURF'];
+
+  // ---------------------------------------------------------------- characters
+  // Five named characters with distinct looks. Portraits are drawn from
+  // these fields by ui.js, so the cast reads as five different people.
+  PV.CHARACTERS = [
+    {
+      id: 'dana', name: 'Dana Cole', role: 'Fixer',
+      skin: '#7a4a2b', hair: '#14100c', hairStyle: 'braids', outfit: '#6d28a8',
+      accent: '#c084fc', desc: 'Runs the jobs from a booth above the plaza.'
+    },
+    {
+      id: 'rico', name: 'Rico Santos', role: 'Wheelman',
+      skin: '#c68e5e', hair: '#1d1410', hairStyle: 'short', outfit: '#b91c1c',
+      accent: '#f87171', desc: 'Drives anything with four wheels. Usually fast.'
+    },
+    {
+      id: 'lena', name: 'Lena Marsh', role: 'Smuggler',
+      skin: '#f0c8a0', hair: '#e8c85a', hairStyle: 'bob', outfit: '#0f766e',
+      accent: '#5eead4', desc: 'Moves cargo through the docks without paperwork.'
+    },
+    {
+      id: 'gus', name: 'Gus Okafor', role: 'Mechanic',
+      skin: '#4a2c17', hair: '#0c0a08', hairStyle: 'bald', outfit: '#c2410c',
+      accent: '#fdba74', desc: 'Owns the garage. Fixes cars, no questions asked.'
+    },
+    {
+      id: 'vex', name: 'Vex Calloway', role: 'Rival',
+      skin: '#a06b42', hair: '#7f1d1d', hairStyle: 'mohawk', outfit: '#111827',
+      accent: '#facc15', desc: 'Leads the crew that wants Port Verona for itself.'
+    }
+  ];
+
+  PV.PED_SKINS = ['#f0c8a0', '#c68e5e', '#8a5a33', '#7a4a2b', '#4a2c17', '#e8b48c'];
+  PV.PED_SHIRTS = ['#b91c1c', '#1d4ed8', '#15803d', '#a16207', '#6d28a8', '#0f766e', '#be185d', '#334155', '#e2e8f0', '#f97316'];
+  PV.PED_HAIRSTYLES = ['short', 'bob', 'braids', 'bald', 'mohawk', 'bun'];
+
+  // ---------------------------------------------------------------- weapons
+  PV.WEAPONS = [
+    { id: 'fists',   name: 'Fists',   melee: true,  damage: 14, range: 2.4, rate: 0.45, ammo: Infinity, maxAmmo: Infinity, price: 0,    respect: 0,  icon: '1' },
+    { id: 'pistol',  name: 'Pistol',  melee: false, damage: 26, range: 70,  rate: 0.32, ammo: 120, maxAmmo: 240, price: 0,    respect: 0,  icon: '2' },
+    { id: 'smg',     name: 'Tempest SMG', melee: false, damage: 13, range: 55, rate: 0.09, ammo: 150, maxAmmo: 400, price: 1200, respect: 10, icon: '3' },
+    { id: 'shotgun', name: 'Sledge', melee: false, damage: 11, range: 26,  rate: 0.85, ammo: 40,  maxAmmo: 120, price: 2600, respect: 25, icon: '4', pellets: 6 },
+    { id: 'rifle',   name: 'Hawk', melee: false, damage: 48, range: 130, rate: 0.9,  ammo: 40,  maxAmmo: 120, price: 5200, respect: 40, icon: '5' }
+  ];
+
+  // ---------------------------------------------------------------- vehicles
+  PV.VEHICLES = [
+    { id: 'hatch',  name: 'Pinto Hatch',  topSpeed: 26, accel: 14, handling: 1.0, health: 80,  price: 0,    respect: 0,  color: '#7c8a9c', seats: 4 },
+    { id: 'sedan',  name: 'Aurea Sedan',  topSpeed: 31, accel: 16, handling: 1.05, health: 100, price: 800,  respect: 0,  color: '#3b82f6', seats: 4 },
+    { id: 'coupe',  name: 'Veloce Coupe', topSpeed: 36, accel: 19, handling: 1.15, health: 90,  price: 2200, respect: 10, color: '#dc2626', seats: 2 },
+    { id: 'sports', name: 'Falcon Astra GT', topSpeed: 44, accel: 24, handling: 1.3, health: 90, price: 6000, respect: 25, color: '#f59e0b', seats: 2 },
+    { id: 'van',    name: 'Cargo Van',    topSpeed: 24, accel: 11, handling: 0.85, health: 140, price: 1500, respect: 5,  color: '#e5e7eb', seats: 3 },
+    { id: 'truck',  name: 'Hauler Truck', topSpeed: 22, accel: 10, handling: 0.8, health: 180, price: 3000, respect: 15, color: '#65a30d', seats: 3 }
+  ];
+
+  PV.POLICE_CAR = { id: 'police', name: 'VCPD Interceptor', topSpeed: 38, accel: 21, handling: 1.2, health: 120, color: '#111827' };
+
+  // ---------------------------------------------------------------- garage
+  PV.GARAGE = {
+    engine: [
+      { name: 'Stock', cost: 0, mult: 1.0 },
+      { name: 'Tuned', cost: 900, mult: 1.18 },
+      { name: 'Race', cost: 2600, mult: 1.38 }
+    ],
+    armor: [
+      { name: 'Stock', cost: 0, mult: 1.0 },
+      { name: 'Plated', cost: 700, mult: 1.5 },
+      { name: 'Armoured', cost: 2000, mult: 2.2 }
+    ],
+    paint: [
+      { name: 'Verona Red', cost: 300, color: '#dc2626' },
+      { name: 'Sunset Gold', cost: 300, color: '#f59e0b' },
+      { name: 'Ocean Blue', cost: 300, color: '#2563eb' },
+      { name: 'Midnight', cost: 500, color: '#111827' },
+      { name: 'Lime Rush', cost: 500, color: '#65a30d' },
+      { name: 'Pearl White', cost: 500, color: '#f1f5f9' }
+    ]
+  };
+
+  // ---------------------------------------------------------------- radio
+  // Three generative stations: the notes are scheduled by audio.js, so no
+  // audio file is ever loaded.
+  PV.RADIO = [
+    { id: 'sunset', name: 'Sunset FM 98.1', genre: 'Golden-hour pop', tempo: 96, scale: [0, 2, 4, 7, 9], root: 57 },
+    { id: 'palma', name: 'Palma FM 98.1', genre: 'Coastal latin', tempo: 116, scale: [0, 2, 3, 7, 8], root: 55 },
+    { id: 'night', name: 'Night Drive 101.4', genre: 'Synthwave', tempo: 84, scale: [0, 3, 5, 7, 10], root: 50 }
+  ];
+
+  // ---------------------------------------------------------------- missions
+  // Step types: goto (reach a place), driveTo (reach it in a car), pickup,
+  // deliver, kill (eliminate N hostiles at a place), race (hit checkpoints
+  // before the timer ends), escort (stay near a moving van), survive
+  // (hold a wanted level for N seconds, then reach a place), talk.
+  PV.MISSIONS = [
+    {
+      id: 'm1', title: 'First Fare', giver: 'dana', respect: 0,
+      brief: 'Dana needs a package moved from the pier to the plaza. No questions, no stops.',
+      dialogue: ['New in town? Good. The pier package, the plaza drop. Walk it or drive it — just don\'t lose it.'],
+      steps: [
+        { type: 'goto', place: 'pier', label: 'Pick up the package at the Old Pier' },
+        { type: 'deliver', place: 'plaza', label: 'Deliver the package to Fountain Plaza' }
+      ],
+      reward: { money: 150, respect: 10 }
+    },
+    {
+      id: 'm2', title: 'Night Run', giver: 'rico', respect: 10,
+      brief: 'Rico set a street race across the boulevard. Four gates, one clock. Beat it.',
+      dialogue: ['You drive? Prove it. Four gates, two and a half minutes. My money says you clip a wall.'],
+      steps: [
+        { type: 'race', checkpoints: [{ x: 0, z: -96 }, { x: 96, z: -96 }, { x: 96, z: 96 }, { x: 0, z: 96 }], timeLimit: 150, label: 'Hit all 4 race gates before time runs out' }
+      ],
+      reward: { money: 300, respect: 15 }
+    },
+    {
+      id: 'm3', title: 'Hot Goods', giver: 'lena', respect: 15,
+      brief: 'A crate at the Harbor warehouse needs to reach Gus without the harbour patrol noticing.',
+      dialogue: ['The crate is marked "machine parts". It is not machine parts. Gus is waiting — go.'],
+      steps: [
+        { type: 'pickup', place: 'warehouse', label: 'Collect the crate at Harbor Warehouse' },
+        { type: 'deliver', place: 'garage', label: 'Drop the crate at Gus\'s garage' }
+      ],
+      reward: { money: 400, respect: 15 }
+    },
+    {
+      id: 'm4', title: 'Muscle Work', giver: 'dana', respect: 25,
+      brief: 'Vex\'s crew is leaning on the plaza vendors. Make them leave. Permanently, if needed.',
+      dialogue: ['Three of Vex\'s boys by the fountain. They respect force. You have force, yes?'],
+      steps: [
+        { type: 'kill', count: 3, place: 'plaza', label: 'Clear 3 of Vex\'s crew from Fountain Plaza' }
+      ],
+      reward: { money: 350, respect: 20 }
+    },
+    {
+      id: 'm5', title: 'Getaway Driver', giver: 'rico', respect: 30,
+      brief: 'Rico lifts a coupe from the market. You drive it out while the VCPD is still waking up.',
+      dialogue: ['Car\'s at the market. Take it, get the heat, lose the heat. That\'s the whole job.'],
+      steps: [
+        { type: 'driveTo', place: 'market', label: 'Reach the coupe at Mercado Norte' },
+        { type: 'survive', seconds: 45, wanted: 2, place: 'garage', label: 'Lose the heat, then reach the garage' }
+      ],
+      reward: { money: 500, respect: 20 }
+    },
+    {
+      id: 'm6', title: 'The Shipment', giver: 'lena', respect: 40,
+      brief: 'Escort Lena\'s van from the docks to the tower. Stay close — the road is not friendly.',
+      dialogue: ['Van leaves the docks in a minute. You ride shotgun — literally. Stay on it.'],
+      steps: [
+        { type: 'escort', place: 'tower', seconds: 75, label: 'Escort the van to Meridian Tower' }
+      ],
+      reward: { money: 600, respect: 25 }
+    },
+    {
+      id: 'm7', title: 'Turf War', giver: 'dana', respect: 50,
+      brief: 'Vex is taking the Sol Arch. Take it back, in front of everybody.',
+      dialogue: ['Five of them under the arch. The whole street is watching. Make it count.'],
+      steps: [
+        { type: 'kill', count: 5, place: 'arch', label: 'Clear 5 of Vex\'s crew from Sol Arch' }
+      ],
+      reward: { money: 700, respect: 25 }
+    },
+    {
+      id: 'm8', title: 'The Informant', giver: 'dana', respect: 60,
+      brief: 'A contact at the fountain knows where Vex hides the ledger. Meet him, then shut the pier down.',
+      dialogue: ['My man at the fountain talks too much — to me, that is. Hear him out, then clean the pier.'],
+      steps: [
+        { type: 'talk', place: 'plaza', label: 'Meet the informant at Fountain Plaza' },
+        { type: 'kill', count: 2, place: 'pier', label: 'Clear 2 guards from the Old Pier' }
+      ],
+      reward: { money: 800, respect: 30 }
+    },
+    {
+      id: 'm9', title: 'Sunset Heist', giver: 'lena', respect: 70,
+      brief: 'A Falcon GT sits outside the tower, keys in it, owner bragging inside. Take it to Gus.',
+      dialogue: ['Gold Falcon, Meridian Tower, engine running. It is practically asking. Bring it to Gus.'],
+      steps: [
+        { type: 'steal', place: 'tower', vehicle: 'sports', label: 'Steal the Falcon GT at Meridian Tower' },
+        { type: 'deliver', place: 'garage', label: 'Deliver the Falcon to Gus\'s garage' }
+      ],
+      reward: { money: 1200, respect: 35 }
+    },
+    {
+      id: 'm10', title: 'The Last Job', giver: 'dana', respect: 85,
+      brief: 'Vex sails at dusk. Take the ledger from the tower, shake a full manhunt, and reach the boat before it leaves.',
+      dialogue: ['This is it. The ledger, the tower, then the pier — with every unit in the city on you. Two minutes. Go.'],
+      steps: [
+        { type: 'pickup', place: 'tower', label: 'Take the ledger from Meridian Tower' },
+        { type: 'survive', seconds: 60, wanted: 4, place: 'pier', label: 'Lose a 4-star manhunt, then reach the pier boat' }
+      ],
+      reward: { money: 2500, respect: 50 }
+    }
+  ];
+
+  // Side jobs the player can start any time from the street.
+  PV.SIDE_JOBS = {
+    race: { name: 'Street Race', reward: 220 },
+    delivery: { name: 'Courier Run', reward: 160 },
+    escort: { name: 'Escort Job', reward: 260 }
+  };
+
+  PV.START_MONEY = 150;
+  PV.WANTED_MAX = 5;
+
+  // How fast wanted falls when no police can see the player (per second).
+  PV.WANTED_DECAY = 0.045;
+  // Seconds out of sight before the heat starts falling.
+  PV.WANTED_HIDE_DELAY = 6;
+})();

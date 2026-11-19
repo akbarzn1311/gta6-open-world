@@ -1,193 +1,233 @@
-// Missions: the story runner. Each mission is a list of typed steps
-// (goto / talk / steal / fight / deliver / escort / race / escape) with
-// a live objective marker. Completing a mission pays money and respect,
-// and respect is what unlocks the next missions, the garage tiers and
-// the better weapons — progression is a gate, not a decoration.
-//
-// Version 1.1: mission 4 "Night Run" now enforces its own fiction —
-// Lena's deal dies at two stars, so hitting 2+ wanted during that
-// mission fails it and the player retries from the start of the mission.
-import * as THREE from 'three';
-import { MISSIONS } from './config.js';
+// Port Verona v2 — missions: ten story jobs with real progression.
+// Each mission is a chain of steps; the state machine here only reads the
+// step table in config.js, so adding a job never touches the engine.
+(function () {
+  'use strict';
+  var PV = (window.PV = window.PV || {});
 
-export class MissionManager {
-  constructor(scene, game) {
-    this.scene = scene;
-    this.game = game; // back-reference for spawning, rewards, toasts
-    this.index = 0; // next mission to play
-    this.active = null; // { def, stepIndex, ...runtime }
-    this.completed = new Set();
-    this.marker = null;
-    this.markerLight = null;
-    this.state = 'idle'; // idle | active | done
-  }
+  var Missions = {
+    // Index of the next mission the player may start (respect-gated).
+    available: function (state) {
+      var idx = state.missionIndex;
+      while (idx < PV.MISSIONS.length && state.respect < PV.MISSIONS[idx].respect) idx++;
+      return idx;
+    },
 
-  get currentDef() { return MISSIONS[this.index] || null; }
+    current: function (state) {
+      if (!state.mission || !state.mission.active) return null;
+      return PV.MISSIONS[state.mission.index];
+    },
 
-  startNext() {
-    const def = this.currentDef;
-    if (!def) return false;
-    this.active = { def, stepIndex: 0, kills: 0, startedAt: performance.now() };
-    this.state = 'active';
-    this.game.showDialogue(def.giver, def.intro);
-    this.game.toast(`Mission ${def.id}: ${def.title}`);
-    this.game.audio.missionDone?.();
-    this.placeMarker();
-    this.setupStep();
-    return true;
-  }
+    stepLabel: function (state) {
+      var m = Missions.current(state);
+      if (!m) return 'No mission — press M to start one';
+      var step = m.steps[state.mission.step];
+      return step ? step.label : 'Return to Dana';
+    },
 
-  placeMarker() {
-    this.clearMarker();
-    const step = this.currentStep();
-    if (!step || !step.target) return;
-    const geo = new THREE.CylinderGeometry(1.2, 1.2, 22, 12, 1, true);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xffc94d, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthWrite: false });
-    this.marker = new THREE.Mesh(geo, mat);
-    this.marker.position.set(step.target.x, 11, step.target.z);
-    this.scene.add(this.marker);
-    this.markerLight = new THREE.PointLight(0xffc94d, 20, 30);
-    this.markerLight.position.set(step.target.x, 6, step.target.z);
-    this.scene.add(this.markerLight);
-  }
+    // Where the objective beacon should point, or null.
+    marker: function (state) {
+      var m = Missions.current(state);
+      if (!m) return null;
+      var step = m.steps[state.mission.step];
+      if (!step) return null;
+      if (step.place) return PV.World.placePosition(step.place);
+      if (step.checkpoints) return step.checkpoints[state.mission.checkpoint || 0];
+      if (step.type === 'escort' && state.escortVan) return { x: state.escortVan.x, z: state.escortVan.z };
+      return null;
+    },
 
-  clearMarker() {
-    if (this.marker) { this.scene.remove(this.marker); this.marker = null; }
-    if (this.markerLight) { this.scene.remove(this.markerLight); this.markerLight = null; }
-  }
+    start: function (state, index) {
+      if (index === undefined || index === null) index = state.missionIndex;
+      var def = PV.MISSIONS[index];
+      if (!def) return false;
+      if (state.respect < def.respect) {
+        PV.UI.showToast('Need ' + def.respect + ' respect for "' + def.title + '"');
+        return false;
+      }
+      if (state.mission && state.mission.active) {
+        PV.UI.showToast('Finish "' + PV.MISSIONS[state.mission.index].title + '" first');
+        return false;
+      }
+      state.mission = {
+        active: true, index: index, step: 0, kills: 0,
+        checkpoint: 0, timer: 0, escortTime: 0, escortFar: 0,
+        van: null
+      };
+      var giver = PV.CHARACTERS.filter(function (c) { return c.id === def.giver; })[0];
+      PV.UI.showDialogue(state, giver, def.dialogue, def.title);
+      PV.UI.showToast('MISSION: ' + def.title);
+      Missions.enterStep(state);
+      return true;
+    },
 
-  currentStep() {
-    if (!this.active) return null;
-    return this.active.def.steps[this.active.stepIndex] || null;
-  }
+    // Set up whatever the new step needs: hostiles, a van, a timer, heat.
+    enterStep: function (state) {
+      var m = Missions.current(state);
+      if (!m) return;
+      var step = m.steps[state.mission.step];
+      if (!step) { Missions.complete(state); return; }
+      state.mission.kills = 0;
+      state.mission.checkpoint = 0;
+      if (step.type === 'kill') {
+        state.mission.hostiles = PV.Traffic.spawnHostiles(state, step.place, step.count);
+      }
+      if (step.type === 'race') {
+        state.mission.timer = step.timeLimit;
+      }
+      if (step.type === 'escort') {
+        var from = PV.World.placePosition('warehouse');
+        var to = PV.World.placePosition(step.place);
+        state.mission.van = PV.Traffic.spawnEscortVan(state, from, to);
+        state.mission.escortTime = 0;
+        state.mission.escortFar = 0;
+      }
+      if (step.type === 'survive') {
+        PV.Police.addWanted(state, Math.max(0, step.wanted - state.wanted), 'the job');
+        state.mission.timer = step.seconds;
+        state.mission.holdHeat = true;
+      }
+      if (step.type === 'steal') {
+        var pos = PV.World.placePosition(step.place);
+        var car = PV.Entities.makeVehicle(state, step.vehicle || 'sports', pos.x + 6, pos.z + 6, 0, {});
+        car.isTarget = true;
+        state.vehicles.push(car);
+        state.mission.targetCar = car;
+      }
+      var mk = Missions.marker(state);
+      PV.World.setMarker(state, mk ? mk.x : null, mk ? mk.z : null);
+    },
 
-  objectiveText() {
-    if (this.state === 'done') return 'Story complete — you own Port Verona. Free roam, races and deliveries remain.';
-    if (!this.active) {
-      const def = this.currentDef;
-      return def ? `Next mission: ${def.title} — press M to start` : 'No missions left';
-    }
-    const step = this.currentStep();
-    if (!step) return '';
-    let text = step.text;
-    if (step.type === 'fight') text += ` (${this.active.kills}/${step.count})`;
-    return text;
-  }
+    advance: function (state) {
+      var m = Missions.current(state);
+      if (!m) return;
+      state.mission.step++;
+      state.mission.holdHeat = false;
+      if (state.mission.step >= m.steps.length) {
+        Missions.complete(state);
+      } else {
+        Missions.enterStep(state);
+      }
+    },
 
-  // Step-specific setup: spawn hostiles, the target car, the race, etc.
-  setupStep() {
-    const step = this.currentStep();
-    if (!step) return;
-    const g = this.game;
-    if (step.type === 'fight') {
-      g.spawnMissionHostiles(step.target, step.count);
-    } else if (step.type === 'steal' && this.active.def.id === 2) {
-      g.ensureMissionCar('coupe', step.target);
-    } else if (step.type === 'steal' && this.active.def.id === 9) {
-      g.ensureMissionCar('van', step.target);
-    } else if (step.type === 'escort') {
-      g.startEscort(step.target);
-    } else if (step.type === 'race') {
-      g.startRace();
-    } else if (step.type === 'escape') {
-      g.police.setWanted(3);
-      g.toast('Lose the heat — stay out of sight until the stars fade');
-    }
-  }
+    complete: function (state) {
+      var m = Missions.current(state);
+      if (!m) return;
+      state.money += m.reward.money;
+      state.respect += m.reward.respect;
+      state.missionIndex = Math.max(state.missionIndex, state.mission.index + 1);
+      state.mission = { active: false, index: state.mission.index, step: 0 };
+      PV.World.setMarker(state, null, null);
+      PV.UI.showToast('MISSION COMPLETE: ' + m.title + '  +$' + m.reward.money + '  +' + m.reward.respect + ' respect');
+      PV.Audio.cash();
+      PV.Save.save(state);
+    },
 
-  completeStep() {
-    if (!this.active) return;
-    this.active.stepIndex += 1;
-    this.game.audio.pickup();
-    if (this.active.stepIndex >= this.active.def.steps.length) this.completeMission();
-    else { this.placeMarker(); this.setupStep(); }
-  }
+    fail: function (state, reason) {
+      var m = Missions.current(state);
+      if (!m) return;
+      state.mission = { active: false, index: state.mission.index, step: 0 };
+      state.mission.holdHeat = false;
+      PV.World.setMarker(state, null, null);
+      PV.UI.showToast('MISSION FAILED: ' + reason + ' — press M to retry');
+    },
 
-  completeMission() {
-    const def = this.active.def;
-    this.completed.add(def.id);
-    this.index += 1;
-    this.state = this.index >= MISSIONS.length ? 'done' : 'idle';
-    this.active = null;
-    this.clearMarker();
-    this.game.state.money += def.reward.money;
-    this.game.state.respect += def.reward.respect;
-    this.game.toast(`Mission complete: ${def.title} — +$${def.reward.money}, +${def.reward.respect} respect`);
-    this.game.audio.missionDone();
-    this.game.autosave();
-    if (this.state === 'done') this.game.toast('STORY COMPLETE — Mara Voss owns the harbor');
-  }
+    // Called when a hostile dies during a kill step.
+    onHostileDown: function (state) {
+      var m = Missions.current(state);
+      if (!m) return;
+      var step = m.steps[state.mission.step];
+      if (!step || step.type !== 'kill') return;
+      state.mission.kills++;
+      if (state.mission.kills >= step.count) Missions.advance(state);
+    },
 
-  // A mission with a hard fail condition (Night Run: 2 stars kills the
-  // deal). The player retries it from the start with M.
-  failMission(reason) {
-    if (!this.active) return;
-    const def = this.active.def;
-    this.game.toast(`Mission failed: ${def.title} — ${reason}`);
-    this.game.audio.denied();
-    this.active = null;
-    this.state = 'idle';
-    this.clearMarker();
-  }
+    update: function (state, dt) {
+      var m = Missions.current(state);
+      if (!m) return;
+      var step = m.steps[state.mission.step];
+      if (!step) return;
+      var p = state.player;
+      var mk = Missions.marker(state);
+      PV.World.setMarker(state, mk ? mk.x : null, mk ? mk.z : null);
 
-  onKill() {
-    if (!this.active) return;
-    const step = this.currentStep();
-    if (step && step.type === 'fight') {
-      this.active.kills += 1;
-      if (this.active.kills >= step.count) this.completeStep();
-    }
-  }
+      function near(x, z, r) {
+        var dx = p.x - x, dz = p.z - z;
+        return dx * dx + dz * dz < r * r;
+      }
 
-  update(dt, playerPos, inVehicle) {
-    if (this.marker) {
-      this.marker.rotation.y += dt * 0.8;
-      this.marker.material.opacity = 0.25 + Math.sin(performance.now() * 0.004) * 0.12;
-    }
-    if (!this.active) return;
-    // Night Run (mission 4): the deal dies at two stars.
-    if (this.active.def.id === 4 && this.game.police.wanted >= 2) {
-      this.failMission('the VCPD saw you — the deal is dead');
-      return;
-    }
-    const step = this.currentStep();
-    if (!step) return;
-    const dist = step.target ? Math.hypot(playerPos.x - step.target.x, playerPos.z - step.target.z) : 999;
-    switch (step.type) {
-      case 'goto':
-      case 'talk':
-      case 'deliver':
-        if (dist < step.radius) this.completeStep();
-        break;
-      case 'steal':
-        // Completed by main.js when the player actually enters the car.
-        break;
-      case 'escort':
-        if (this.game.escortDone) this.completeStep();
-        break;
-      case 'race':
-        if (this.game.raceResult) {
-          if (this.game.raceResult === 'win') this.completeStep();
-          else { this.game.toast('Race lost — press M to retry the mission'); this.active = null; this.state = 'idle'; this.clearMarker(); }
-          this.game.raceResult = null;
+      if (step.type === 'goto' || step.type === 'pickup' || step.type === 'talk' || step.type === 'deliver') {
+        var pos = PV.World.placePosition(step.place);
+        if (near(pos.x, pos.z, 10)) {
+          if (step.type === 'pickup') PV.UI.showToast('Picked up — now deliver it');
+          if (step.type === 'talk') PV.UI.showToast('The informant talks. The ledger is at the tower.');
+          Missions.advance(state);
         }
-        break;
-      case 'escape':
-        if (this.game.police.wanted === 0 && dist < step.radius) this.completeStep();
-        break;
-      default:
-        break;
+      } else if (step.type === 'driveTo') {
+        var pos2 = PV.World.placePosition(step.place);
+        if (p.mode === 'car' && near(pos2.x, pos2.z, 12)) Missions.advance(state);
+      } else if (step.type === 'steal') {
+        var car = state.mission.targetCar;
+        if (car && p.mode === 'car' && p.vehicle === car) {
+          PV.Police.addWanted(state, 1, 'vehicle theft');
+          Missions.advance(state);
+        }
+      } else if (step.type === 'race') {
+        state.mission.timer -= dt;
+        var cp = step.checkpoints[state.mission.checkpoint];
+        if (cp && p.mode === 'car' && near(cp.x, cp.z, 12)) {
+          state.mission.checkpoint++;
+          PV.UI.showToast('Gate ' + state.mission.checkpoint + '/' + step.checkpoints.length);
+          if (state.mission.checkpoint >= step.checkpoints.length) Missions.advance(state);
+        } else if (state.mission.timer <= 0) {
+          Missions.fail(state, 'Out of time');
+        }
+      } else if (step.type === 'escort') {
+        var van = state.mission.van;
+        if (!van || van.wrecked) { Missions.fail(state, 'The van was destroyed'); return; }
+        // The van drives its route on its own.
+        if (van.route) {
+          var wp = van.route[van.routeIdx];
+          var dx = wp.x - van.x, dz = wp.z - van.z;
+          var dist = Math.sqrt(dx * dx + dz * dz);
+          if (dist < 4) van.routeIdx = Math.min(van.routeIdx + 1, van.route.length - 1);
+          else {
+            var wh = Math.atan2(dx, dz);
+            var dh = wh - van.heading;
+            while (dh > Math.PI) dh -= Math.PI * 2;
+            while (dh < -Math.PI) dh += Math.PI * 2;
+            PV.Entities.updateVehicle(state, van, dt, {
+              throttle: van.speed < van.cruise ? 0.6 : 0,
+              steer: PV.clamp(dh * 2, -1, 1), brake: false
+            });
+          }
+        }
+        var vdx = p.x - van.x, vdz = p.z - van.z;
+        var vdist = Math.sqrt(vdx * vdx + vdz * vdz);
+        if (vdist < 30) {
+          state.mission.escortTime += dt;
+          state.mission.escortFar = 0;
+        } else {
+          state.mission.escortFar += dt;
+          if (state.mission.escortFar > 12) { Missions.fail(state, 'You lost the van'); return; }
+        }
+        var dest = PV.World.placePosition(step.place);
+        var ddx = van.x - dest.x, ddz = van.z - dest.z;
+        if (ddx * ddx + ddz * ddz < 144 && vdist < 30) {
+          Missions.advance(state);
+        }
+      } else if (step.type === 'survive') {
+        state.mission.timer -= dt;
+        if (state.mission.timer <= 0) {
+          var dest2 = PV.World.placePosition(step.place);
+          if (near(dest2.x, dest2.z, 12)) Missions.advance(state);
+          else if (state.wanted <= 0) Missions.advance(state);
+        }
+      } else if (step.type === 'kill') {
+        // Completion is counted in onHostileDown.
+      }
     }
-  }
+  };
 
-  // Save/load: only the index and completed set need persisting.
-  serialize() { return { index: this.index, completed: [...this.completed] }; }
-  restore(data) {
-    if (!data) return;
-    this.index = data.index || 0;
-    this.completed = new Set(data.completed || []);
-    this.state = this.index >= MISSIONS.length ? 'done' : 'idle';
-    this.active = null;
-    this.clearMarker();
-  }
-}
+  PV.Missions = Missions;
+})();
