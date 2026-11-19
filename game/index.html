@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Port Verona — Open-World Crime Game</title>
+<!-- Inline SVG favicon (data URI): no extra request, so the game stays
+     100% offline and the browser never 404s on /favicon.ico. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231c2f6e'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' fill='%23ffc94d' font-family='sans-serif' font-weight='bold'%3EPV%3C/text%3E%3C/svg%3E">
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1526; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #eef1f5; }
   #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
@@ -45,6 +48,7 @@
   #garage-list { width: 520px; max-width: 92vw; text-align: left; }
   .garage-btn { display: block; width: 100%; text-align: left; }
   .garage-btn.owned { border-color: #7dd87d; color: #7dd87d; }
+  #version { position: fixed; right: 14px; bottom: 12px; z-index: 11; font-size: 12px; opacity: .6; text-shadow: 0 1px 3px #000; }
 </style>
 <script type="importmap">
 { "imports": { "three": "./vendor/three.min.js" } }
@@ -102,6 +106,8 @@
   <button id="btn-retry">Load last save</button>
   <button id="btn-dead-title">Quit to title</button>
 </div>
+
+<div id="version">Port Verona v1.1</div>
 
 <script type="module" src="./src/main.js"></script>
 </body>
