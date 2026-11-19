@@ -3,7 +3,10 @@
 // the player stays out of sight. The response escalates with the level:
 // patrol cars chase, roadblocks cut off escape routes, and a helicopter
 // joins at four stars and above.
-// dispatch system: escalates based on wantedLevel
+//
+// Version 1.1: roadblock cars flash their light bars too (they are
+// police cars, and the strobe is what sells a roadblock at night), and
+// the dead `next` variable in addHeat is gone.
 import * as THREE from 'three';
 import { Vehicle } from './entities.js';
 
@@ -24,7 +27,6 @@ export class PoliceManager {
 
   addHeat(amount, reason) {
     this.heat += amount;
-    const next = Math.min(5, Math.floor(this.heat / 20) + (this.heat > 0 ? 0 : 0));
     const level = Math.min(5, Math.ceil(this.heat / 20));
     if (level > this.wanted) {
       this.wanted = level;
@@ -131,6 +133,8 @@ export class PoliceManager {
     // Cop AI: steer toward the player, ram at close range. If the player
     // is on foot and slow, cops get out and chase on foot (simplified:
     // they stop 4 units away and the player takes damage if too close).
+    this.flash += dt;
+    const strobe = Math.floor(this.flash * 4) % 2 === 0 ? 0xff2222 : 0x2244ff;
     for (let i = this.cops.length - 1; i >= 0; i--) {
       const cop = this.cops[i];
       if (cop.dead) {
@@ -154,17 +158,19 @@ export class PoliceManager {
       cop.mesh.position.z += fz * cop.speed * dt;
       cop.mesh.rotation.y = cop.heading;
       // Flashing light bar.
-      this.flash += dt;
       if (cop.mesh.userData.lightBar) {
-        cop.mesh.userData.lightBar.material.emissive.setHex(Math.floor(this.flash * 4) % 2 === 0 ? 0xff2222 : 0x2244ff);
+        cop.mesh.userData.lightBar.material.emissive.setHex(strobe);
       }
       this.world.resolveCollision(cop.mesh.position, 2.4);
     }
 
-    // Roadblocks expire; their cars stay parked until then.
+    // Roadblocks expire; their cars stay parked until then, lights flashing.
     for (let i = this.roadblocks.length - 1; i >= 0; i--) {
       const rb = this.roadblocks[i];
       rb.life -= dt;
+      for (const c of rb.cars) {
+        if (c.mesh.userData.lightBar) c.mesh.userData.lightBar.material.emissive.setHex(strobe);
+      }
       if (rb.life <= 0) {
         rb.cars.forEach((c) => this.scene.remove(c.mesh));
         this.roadblocks.splice(i, 1);

@@ -3,6 +3,10 @@
 // a live objective marker. Completing a mission pays money and respect,
 // and respect is what unlocks the next missions, the garage tiers and
 // the better weapons — progression is a gate, not a decoration.
+//
+// Version 1.1: mission 4 "Night Run" now enforces its own fiction —
+// Lena's deal dies at two stars, so hitting 2+ wanted during that
+// mission fails it and the player retries from the start of the mission.
 import * as THREE from 'three';
 import { MISSIONS } from './config.js';
 
@@ -114,6 +118,18 @@ export class MissionManager {
     if (this.state === 'done') this.game.toast('STORY COMPLETE — Mara Voss owns the harbor');
   }
 
+  // A mission with a hard fail condition (Night Run: 2 stars kills the
+  // deal). The player retries it from the start with M.
+  failMission(reason) {
+    if (!this.active) return;
+    const def = this.active.def;
+    this.game.toast(`Mission failed: ${def.title} — ${reason}`);
+    this.game.audio.denied();
+    this.active = null;
+    this.state = 'idle';
+    this.clearMarker();
+  }
+
   onKill() {
     if (!this.active) return;
     const step = this.currentStep();
@@ -129,6 +145,11 @@ export class MissionManager {
       this.marker.material.opacity = 0.25 + Math.sin(performance.now() * 0.004) * 0.12;
     }
     if (!this.active) return;
+    // Night Run (mission 4): the deal dies at two stars.
+    if (this.active.def.id === 4 && this.game.police.wanted >= 2) {
+      this.failMission('the VCPD saw you — the deal is dead');
+      return;
+    }
     const step = this.currentStep();
     if (!step) return;
     const dist = step.target ? Math.hypot(playerPos.x - step.target.x, playerPos.z - step.target.z) : 999;

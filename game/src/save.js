@@ -2,7 +2,10 @@
 // game is 100% offline and survives a closed tab. Autosave runs after
 // every mission and every 30 seconds of play; the title screen offers
 // Continue when a save exists.
-export const SAVE_KEY = 'port-verona.save.v1';
+//
+// Version 1.1: the save key is v2, so saves from the 1.0 test builds
+// (different weapon/ammo balance) never load into 1.1 by mistake.
+export const SAVE_KEY = 'port-verona.save.v2';
 
 export function saveGame(data) {
   try {

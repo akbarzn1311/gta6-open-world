@@ -1,6 +1,11 @@
 // World: the city of Port Verona itself — street grid, buildings, unique
 // landmarks, sky, day/night lighting and dynamic weather. Everything is
 // procedural geometry (boxes, cylinders, cones) so no texture files exist.
+//
+// Version 1.1: night and rain are lit brighter — the sun floor, the
+// hemisphere floor, the window glow and the lamps all come up — because
+// the 1.0 chase screenshot was too dark to read the city in. Rain still
+// reads as rain (grey sky, wet traction), just no longer as pitch black.
 import * as THREE from 'three';
 import { CITY } from './config.js';
 
@@ -85,7 +90,7 @@ export class World {
 
     // City blocks: varied building heights and colours, windows as a
     // single emissive strip per building (cheap, reads well at dusk).
-    const winMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, emissive: WINDOW_COLOR, emissiveIntensity: 0.7 });
+    const winMat = new THREE.MeshStandardMaterial({ color: 0x2a2a2a, emissive: WINDOW_COLOR, emissiveIntensity: 0.95 });
     for (let bx = -n; bx < n; bx++) {
       for (let bz = -n; bz < n; bz++) {
         const cx = this.roadCoord(bx) + (CITY.block + CITY.road) / 2;
@@ -336,20 +341,22 @@ export class World {
     const night = new THREE.Color(0x2a3a6a);
     this.sun.color.copy(warm).lerp(noon, Math.min(1, day));
     if (day < 0.15) this.sun.color.copy(night);
-    this.sun.intensity = 0.25 + day * 2.0 + dusk * 0.8;
-    this.hemi.intensity = 0.25 + day * 0.55;
+    // v1.1: the night floor is higher (0.45 sun / 0.42 hemi) so night
+    // and rain scenes stay readable instead of going near-black.
+    this.sun.intensity = 0.45 + day * 2.0 + dusk * 0.8;
+    this.hemi.intensity = 0.42 + day * 0.55;
     const skyDay = new THREE.Color(0x87b8e8);
     const skyDusk = new THREE.Color(0xe88a4d);
     const skyNight = new THREE.Color(0x0d1526);
     const sky = skyNight.clone();
     if (day > 0) sky.lerp(skyDay, day);
     if (dusk > 0) sky.lerp(skyDusk, dusk * 0.7);
-    if (this.weather === 'rain') sky.lerp(new THREE.Color(0x4a5566), 0.55);
+    if (this.weather === 'rain') sky.lerp(new THREE.Color(0x4a5566), 0.4);
     if (this.weather === 'cloud') sky.lerp(new THREE.Color(0x8a94a8), 0.35);
     this.scene.background = sky;
     this.scene.fog.color.copy(sky);
     const nightOn = day < 0.25;
-    this.lamps.forEach((l) => { l.material.emissiveIntensity = nightOn ? 1.8 : 0; });
+    this.lamps.forEach((l) => { l.material.emissiveIntensity = nightOn ? 2.2 : 0; });
   }
 
   isNight() { return this.hour < 6 || this.hour > 19.5; }

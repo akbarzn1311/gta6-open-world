@@ -3,6 +3,11 @@
 // so the judge's source outline reads like a design document.
 // City: an original fictional city. Nothing here is copied from any
 // commercial game: all names, characters and places are invented.
+//
+// Version 1.1 (rewritten in the recorded session): same content, plus the
+// VERSION stamp the HUD and the dossier use to tell builds apart.
+export const VERSION = '1.1';
+
 export const CITY = {
   name: 'Port Verona',
   // Playable ground, in world units (1 unit ~ 1 m). Blocks are 40 units,

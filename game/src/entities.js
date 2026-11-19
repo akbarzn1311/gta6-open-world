@@ -2,6 +2,9 @@
 // mesh group plus a small state object (speed, health, upgrades); a ped
 // is a mesh plus a behaviour state. Damage is visual AND mechanical:
 // a battered car smokes, loses top speed and handles worse.
+//
+// Version 1.1: cars get red tail lights at the rear (they read at night
+// and make traffic visible from behind in chase shots).
 import * as THREE from 'three';
 import { VEHICLE_TYPES } from './config.js';
 
@@ -47,6 +50,13 @@ export function createVehicleMesh(type, colorHex) {
   const lightMat = new THREE.MeshStandardMaterial({ color: 0x111111, emissive: 0xffe9a8, emissiveIntensity: 0.9 });
   [[2.32, 0.7], [2.32, -0.7]].forEach(([x, z]) => {
     const l = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.3, 0.35), lightMat);
+    l.position.set(x, 0.75, z);
+    group.add(l);
+  });
+  // Tail lights: red emissive boxes at the rear, visible in the dark.
+  const tailMat = new THREE.MeshStandardMaterial({ color: 0x220000, emissive: 0xcc2222, emissiveIntensity: 1.1 });
+  [[-2.32, 0.7], [-2.32, -0.7]].forEach(([x, z]) => {
+    const l = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.3, 0.35), tailMat);
     l.position.set(x, 0.75, z);
     group.add(l);
   });

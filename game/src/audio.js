@@ -1,6 +1,10 @@
 // Audio engine: everything is synthesized with WebAudio at runtime.
 // No audio files are shipped, so the game stays 100% offline and the
 // three radio stations are real switchable music, not silence.
+//
+// Version 1.1: the engine hum's lowpass opens a little wider (900 -> 1200 Hz)
+// so the higher gears read, and traffic can honk (horn) when the player
+// blocks a lane.
 import { RADIO_STATIONS } from './config.js';
 
 function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
@@ -103,6 +107,12 @@ export class AudioEngine {
   missionDone() { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => this.blip(f, 0.2, 'sine', 0.3), i * 110)); }
   denied() { this.blip(160, 0.2, 'square', 0.25); }
 
+  // Two-tone car horn: traffic uses it when the player blocks a lane.
+  horn() {
+    this.blip(370, 0.18, 'square', 0.12);
+    setTimeout(() => this.blip(311, 0.18, 'square', 0.12), 40);
+  }
+
   // Engine hum: one oscillator whose pitch follows the car's speed.
   setEngine(speedRatio, on) {
     if (!this.ctx) return;
@@ -112,7 +122,7 @@ export class AudioEngine {
       this.engineOsc.type = 'sawtooth';
       this.engineGain.gain.value = 0.03;
       const f = this.ctx.createBiquadFilter();
-      f.type = 'lowpass'; f.frequency.value = 900;
+      f.type = 'lowpass'; f.frequency.value = 1200;
       this.engineOsc.connect(f); f.connect(this.engineGain); this.engineGain.connect(this.master);
       this.engineOsc.start();
     }

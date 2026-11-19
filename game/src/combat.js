@@ -2,6 +2,10 @@
 // Shooting uses a raycast against peds and police cars; every shot is
 // a crime, so firing in the open raises the wanted level — the combat
 // system and the police system are wired together on purpose.
+//
+// Version 1.1: dropping a hostile now scavenges +12 ammo for the weapon
+// in hand, so fight missions keep the player in the fight instead of
+// forcing a trip back to the garage mid-mission.
 import * as THREE from 'three';
 import { WEAPONS, WEAPON_ORDER } from './config.js';
 
@@ -40,6 +44,13 @@ export class Combat {
     this.select(list[(i + dir + list.length) % list.length]);
   }
 
+  // Scavenged ammo from a hostile that just went down.
+  scavenge() {
+    if (WEAPONS[this.current].melee) return;
+    if (this.ammo[this.current] === undefined) return;
+    this.ammo[this.current] = Math.min(this.ammo[this.current] + 12, 999);
+  }
+
   // Fire from the camera through the crosshair. Hits the nearest ped
   // or police car on the ray; misses kick up a spark where they land.
   shoot(origin, direction) {
@@ -74,8 +85,12 @@ export class Combat {
       const ped = this.game.traffic.peds.find((p) => p.mesh === obj);
       if (ped) {
         ped.health -= w.damage;
-        if (ped.hostile) this.game.missions.onKill();
+        // Kills are counted once, when the ped actually dies: the
+        // traffic update calls missions.onKill() via onPedDeath.
+        // (Counting here too used to count one hostile several times —
+        // three pistol hits on one collector finished a 3-kill mission.)
         if (ped.health <= 0) {
+          if (ped.hostile) this.scavenge();
           this.game.police.addHeat(ped.hostile ? 8 : 20, ped.hostile ? 'hostile down' : 'civilian shot');
         } else if (!ped.hostile) {
           this.game.police.addHeat(10, 'shot fired at civilian');
@@ -113,7 +128,8 @@ export class Combat {
         if (facing > 0) {
           p.health -= WEAPONS.fists.damage;
           this.world.spawnParticles(p.mesh.position.clone().setY(1.4), 0xffffff, 5, 3, 0.3, 0.3);
-          if (p.hostile) this.game.missions.onKill();
+          // Deaths are counted once by the traffic update (onPedDeath),
+          // not per hit — see shoot() above.
           if (p.health <= 0) this.game.police.addHeat(p.hostile ? 8 : 15, 'melee');
         }
       }

@@ -2,6 +2,10 @@
 // radio, clock, weather), the 2D canvas minimap, dialogue, toasts and
 // the title / pause / garage / weapon-wheel screens. The 3D scene never
 // draws UI — the DOM does, so the HUD stays crisp in screenshots.
+//
+// Version 1.1: the minimap also marks side-activity targets — a gold dot
+// for the active delivery destination and a green dot for the escort
+// van — so jobs are readable without opening any menu.
 import { WEAPONS, WEAPON_ORDER, RADIO_STATIONS, GARAGE_UPGRADES } from './config.js';
 
 export class UI {
@@ -10,7 +14,13 @@ export class UI {
     this.el = {};
     ['hud', 'health-fill', 'armor-fill', 'health-text', 'money', 'respect', 'stars', 'weapon', 'radio',
      'clock', 'weather', 'objective', 'minimap', 'toast', 'dialogue', 'dialogue-giver', 'dialogue-text',
-     'title', 'pause', 'garage', 'wheel', 'dead', 'hint', 'speed'].forEach((id) => {
+     'title', 'pause', 'garage', 'wheel', 'dead', 'hint', 'speed',
+     // Menu buttons too: bindMenus() calls show('btn-continue') when a
+     // save exists, and show() reads this.el[id].classList — an id
+     // missing here used to throw at boot and kill the whole game
+     // whenever a save existed (found by the v1.1 reload test).
+     'btn-new', 'btn-continue', 'btn-how', 'btn-resume', 'btn-save', 'btn-quit',
+     'btn-retry', 'btn-dead-title'].forEach((id) => {
       this.el[id] = document.getElementById(id);
     });
     this.mm = this.el.minimap.getContext('2d');
@@ -112,7 +122,8 @@ export class UI {
   }
 
   // Minimap: top-down 2D map — roads, landmarks, player, police,
-  // mission marker and the garage. Drawn every frame, cheap.
+  // mission marker, delivery and escort targets, and the garage.
+  // Drawn every frame, cheap.
   drawMinimap(state) {
     const c = this.mm;
     const S = 240; // world half-size, mapped to the 190px canvas
@@ -142,6 +153,16 @@ export class UI {
       c.beginPath(); c.arc(toX(step.target.x), toY(step.target.z), 5, 0, Math.PI * 2); c.fill();
       c.strokeStyle = '#ffc94d';
       c.beginPath(); c.arc(toX(step.target.x), toY(step.target.z), 9, 0, Math.PI * 2); c.stroke();
+    }
+    // Delivery destination (gold) and escort van (green).
+    if (this.game.delivery) {
+      c.fillStyle = '#ffd24d';
+      c.beginPath(); c.arc(toX(this.game.delivery.dest.x), toY(this.game.delivery.dest.z), 4, 0, Math.PI * 2); c.fill();
+    }
+    if (this.game.escortVan && !this.game.escortVan.done) {
+      const v = this.game.escortVan.vehicle;
+      c.fillStyle = '#7dd87d';
+      c.beginPath(); c.arc(toX(v.mesh.position.x), toY(v.mesh.position.z), 4, 0, Math.PI * 2); c.fill();
     }
     // Police blips.
     c.fillStyle = '#3a6eff';

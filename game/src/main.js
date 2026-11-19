@@ -3,8 +3,12 @@
 // and the renderer paints what is there. Screens: title, play, paused,
 // garage, dead. ?shot=start|play|chase|end stages a scene for a
 // screenshot instead of the title screen and sets window.__shotReady.
+//
+// Version 1.1 (rewritten in the recorded session): the traffic update
+// gets the audio engine so blocked drivers can honk, and the chase
+// staging adds a roadblock ahead of the player for a busier frame.
 import * as THREE from 'three';
-import { CITY, PLAYER, WEAPONS, WEAPON_ORDER, GARAGE_UPGRADES, GARAGE_POS, SPAWN_POS, MISSIONS } from './config.js';
+import { CITY, PLAYER, VERSION, WEAPONS, WEAPON_ORDER, GARAGE_UPGRADES, GARAGE_POS, SPAWN_POS, MISSIONS } from './config.js';
 import { World, mulberry32 } from './world.js';
 import { Vehicle, Ped, createPedMesh } from './entities.js';
 import { TrafficManager } from './traffic.js';
@@ -192,7 +196,7 @@ export class Game {
       const s = loadGame();
       if (s) this.restore(s);
     }
-    this.announce('Playing Port Verona. Press M to start the first mission.');
+    this.announce(`Playing Port Verona v${VERSION}. Press M to start the first mission.`);
   }
 
   pause() {
@@ -476,7 +480,7 @@ export class Game {
       const playerPos = { x: this.state.px, z: this.state.pz, heading: this.state.heading };
       this.traffic.update(dt, playerPos, this.world.hour, (p) => {
         if (p.hostile) this.missions.onKill();
-      });
+      }, this.audio);
       const nearestCop = this.police.update(dt, playerPos, inVehicle ? Math.abs(this.currentVehicle?.speed || 0) : 0, inVehicle, this.audio);
       this.missions.update(dt, playerPos, inVehicle);
       this.combat.update(dt);
@@ -599,7 +603,7 @@ export class Game {
       this.police.spawnCop({ x: 0, z: 40 });
       this.camYaw = 0;
     } else if (name === 'chase') {
-      // Night rain, 4 stars, helicopter overhead.
+      // Night rain, 4 stars, helicopter overhead, roadblock ahead.
       this.world.setHour(22);
       this.world.setWeather('rain');
       const v = new Vehicle('muscle', -40, 0, 0);
@@ -609,6 +613,7 @@ export class Game {
       this.police.setWanted(4);
       this.police.spawnCop({ x: -40, z: 0 });
       this.police.spawnCop({ x: -40, z: 20 });
+      this.police.spawnRoadblock({ x: -40, z: 0, heading: 0 }, 0);
       this.camYaw = 0;
     } else {
       // 'end': dusk at Verona Tower after the finale.
