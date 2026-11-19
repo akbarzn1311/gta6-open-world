@@ -1,1 +1,1 @@
-[{"name":"1-start.jpg","query":"?shot=start&seed=1"},{"name":"2-play.jpg","query":"?shot=play&seed=1"},{"name":"3-chase.jpg","query":"?shot=chase&seed=1"},{"name":"4-end.jpg","query":"?shot=end&seed=1"}]
+{"shots":[{"file":"1-start.jpg","scene":"Start screen over the city at golden hour"},{"file":"2-drive.jpg","scene":"Driving the Falcon Astra GT down Paseo del Mar"},{"file":"3-chase.jpg","scene":"Three-star wanted chase with patrol cars closing in"},{"file":"4-mission.jpg","scene":"Mission complete — The Big One, Dana Cole"}]}
