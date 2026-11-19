@@ -1,161 +1,254 @@
-// Combat: weapons, the radial weapon wheel, shooting and melee.
-// Shooting uses a raycast against peds and police cars; every shot is
-// a crime, so firing in the open raises the wanted level — the combat
-// system and the police system are wired together on purpose.
-//
-// Version 1.1: dropping a hostile now scavenges +12 ammo for the weapon
-// in hand, so fight missions keep the player in the fight instead of
-// forcing a trip back to the garage mid-mission.
-import * as THREE from 'three';
-import { WEAPONS, WEAPON_ORDER } from './config.js';
+// Port Verona — combat: fists, pistol, Tempest SMG, Hawk shotgun, Sledge.
+// Melee is a short-range swing; guns fire hitscan tracers at the nearest
+// enemy in the aim cone. Enemies are simple box figures with health that
+// chase and punch the player. Weapon wheel (Q or 1–4) switches weapons;
+// ammo is bought with cash at Gus, and the Sledge is a heavy melee swing.
 
-export class Combat {
-  constructor(scene, world, game) {
-    this.scene = scene;
-    this.world = world;
-    this.game = game;
-    this.current = 'pistol';
-    this.ammo = { pistol: 120, smg: 240, shotgun: 48, rifle: 180 };
-    this.cooldown = 0;
-    this.wheelOpen = false;
-    this.raycaster = new THREE.Raycaster();
-    this.muzzleTimer = 0;
+(function () {
+  'use strict';
+
+  var U = window.PV.util;
+
+  var WEAPONS = [
+    { id: 'fists', name: 'Fists', kind: 'melee', damage: 18, rate: 0.45, range: 2.4, ammo: Infinity, icon: '✊' },
+    { id: 'pistol', name: 'Pistol', kind: 'gun', damage: 26, rate: 0.32, range: 42, ammo: 60, icon: '🔫' },
+    { id: 'tempest', name: 'Tempest SMG', kind: 'gun', damage: 16, rate: 0.09, range: 38, ammo: 240, icon: '💥' },
+    { id: 'hawk', name: 'Hawk Shotgun', kind: 'gun', damage: 14, rate: 0.85, range: 22, ammo: 32, pellets: 6, icon: '💣' },
+    { id: 'sledge', name: 'Sledge', kind: 'melee', damage: 46, rate: 0.8, range: 3.0, ammo: Infinity, icon: '🔨' },
+  ];
+
+  var state = {
+    weaponIndex: 0,
+    ammo: {},
+    cooldown: 0,
+    kills: 0,
+  };
+
+  var enemies = [];
+  var tracers = [];
+  var sceneRef = null;
+  var rng = U.makeRng(777);
+
+  WEAPONS.forEach(function (w) { state.ammo[w.id] = w.ammo; });
+
+  function weapon() {
+    return WEAPONS[state.weaponIndex];
   }
 
-  unlockedWeapons() {
-    return WEAPON_ORDER.filter((id) => (WEAPONS[id].respect || 0) <= this.game.state.respect);
+  function setWeapon(i) {
+    state.weaponIndex = ((i % WEAPONS.length) + WEAPONS.length) % WEAPONS.length;
+    return weapon();
   }
 
-  select(id) {
-    if (!WEAPON_ORDER.includes(id)) return;
-    if ((WEAPONS[id].respect || 0) > this.game.state.respect) {
-      this.game.toast(`Locked — needs ${WEAPONS[id].respect} respect`);
-      this.game.audio.denied();
-      return;
+  function cycleWeapon(dir) {
+    return setWeapon(state.weaponIndex + (dir || 1));
+  }
+
+  function buyAmmo(id, count, price) {
+    state.ammo[id] = (state.ammo[id] || 0) + count;
+    return state.ammo[id];
+  }
+
+  function makeEnemyMesh() {
+    var g = new THREE.Group();
+    var skin = new THREE.MeshLambertMaterial({ color: 0xb98a62 });
+    var shirt = new THREE.MeshLambertMaterial({ color: 0x8a2f2f });
+    var pants = new THREE.MeshLambertMaterial({ color: 0x2a2a33 });
+    var body = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 0.4), shirt);
+    body.position.y = 1.05;
+    g.add(body);
+    var head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), skin);
+    head.position.y = 1.75;
+    g.add(head);
+    var legL = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.6, 0.3), pants);
+    legL.position.set(-0.18, 0.3, 0);
+    g.add(legL);
+    var legR = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.6, 0.3), pants);
+    legR.position.set(0.18, 0.3, 0);
+    g.add(legR);
+    var gun = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 0.7), new THREE.MeshLambertMaterial({ color: 0x111111 }));
+    gun.position.set(0.3, 1.25, 0.3);
+    g.add(gun);
+    return g;
+  }
+
+  function spawnEnemies(x, z, n) {
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var a = (i / n) * Math.PI * 2 + rng() * 0.5;
+      var ex = x + Math.cos(a) * (8 + rng() * 10);
+      var ez = z + Math.sin(a) * (8 + rng() * 10);
+      var mesh = makeEnemyMesh();
+      mesh.position.set(ex, 0, ez);
+      sceneRef.add(mesh);
+      var e = { mesh: mesh, x: ex, z: ez, health: 100, speed: 3.2 + rng() * 1.2, attackCd: 0, hitFlash: 0 };
+      enemies.push(e);
+      out.push(e);
     }
-    this.current = id;
-    this.game.state.weapon = id;
-    this.game.toast(WEAPONS[id].name);
+    return out;
   }
 
-  cycle(dir) {
-    const list = this.unlockedWeapons();
-    const i = list.indexOf(this.current);
-    this.select(list[(i + dir + list.length) % list.length]);
+  function nearestEnemyInCone(x, z, heading, range, halfAngle) {
+    var best = null;
+    var bestD = range;
+    enemies.forEach(function (e) {
+      var dx = e.x - x;
+      var dz = e.z - z;
+      var d = Math.sqrt(dx * dx + dz * dz);
+      if (d > range) return;
+      var ang = Math.atan2(dx, dz);
+      if (Math.abs(U.angleDiff(heading, ang)) > halfAngle) return;
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    });
+    return best;
   }
 
-  // Scavenged ammo from a hostile that just went down.
-  scavenge() {
-    if (WEAPONS[this.current].melee) return;
-    if (this.ammo[this.current] === undefined) return;
-    this.ammo[this.current] = Math.min(this.ammo[this.current] + 12, 999);
+  function addTracer(from, to) {
+    var geo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(from.x, from.y, from.z),
+      new THREE.Vector3(to.x, to.y, to.z),
+    ]);
+    var line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xffe9a8, transparent: true, opacity: 0.95 }));
+    sceneRef.add(line);
+    tracers.push({ line: line, life: 0.09 });
   }
 
-  // Fire from the camera through the crosshair. Hits the nearest ped
-  // or police car on the ray; misses kick up a spark where they land.
-  shoot(origin, direction) {
-    if (this.cooldown > 0) return;
-    const w = WEAPONS[this.current];
-    if (w.melee) { this.melee(origin, direction); return; }
-    if ((this.ammo[this.current] ?? 0) <= 0) {
-      this.game.toast('Out of ammo — buy more at the garage');
-      this.game.audio.denied();
-      this.cooldown = 0.4;
-      return;
+  function damageEnemy(e, dmg) {
+    e.health -= dmg;
+    e.hitFlash = 0.12;
+    e.mesh.children.forEach(function (c) {
+      if (c.material && c.material.emissive) c.material.emissive.setHex(0xaa0000);
+    });
+    if (e.health <= 0) {
+      sceneRef.remove(e.mesh);
+      enemies.splice(enemies.indexOf(e), 1);
+      state.kills += 1;
+      window.PV.audio.pickup();
+      return true;
     }
-    this.ammo[this.current] -= 1;
-    this.cooldown = w.rate;
-    this.game.audio.shoot();
-    const start = origin.clone();
-    const muzzle = start.clone().addScaledVector(direction, 1.5);
-    muzzle.y = Math.max(muzzle.y, 1.2);
-    this.world.spawnParticles(muzzle, 0xffd24d, 6, 4, 0.25, 0.35);
-    this.raycaster.set(start, direction);
-    this.raycaster.far = w.range;
-    const targets = [];
-    for (const p of this.game.traffic.peds) if (!p.dead) targets.push(p.mesh);
-    for (const c of this.game.police.cops) targets.push(c.mesh);
-    const hits = this.raycaster.intersectObjects(targets, true);
-    if (hits.length > 0) {
-      const hit = hits[0];
-      let obj = hit.object;
-      while (obj.parent && obj.parent !== this.scene) obj = obj.parent;
-      this.world.spawnParticles(hit.point, 0xff5544, 10, 6, 0.4, 0.4);
-      this.game.audio.hit();
-      const ped = this.game.traffic.peds.find((p) => p.mesh === obj);
-      if (ped) {
-        ped.health -= w.damage;
-        // Kills are counted once, when the ped actually dies: the
-        // traffic update calls missions.onKill() via onPedDeath.
-        // (Counting here too used to count one hostile several times —
-        // three pistol hits on one collector finished a 3-kill mission.)
-        if (ped.health <= 0) {
-          if (ped.hostile) this.scavenge();
-          this.game.police.addHeat(ped.hostile ? 8 : 20, ped.hostile ? 'hostile down' : 'civilian shot');
-        } else if (!ped.hostile) {
-          this.game.police.addHeat(10, 'shot fired at civilian');
+    return false;
+  }
+
+  /**
+   * Try to fire the current weapon. ctx: { x, z, heading, y }
+   * Returns true when a shot was fired.
+   */
+  function attack(ctx) {
+    if (state.cooldown > 0) return false;
+    var w = weapon();
+    if (w.kind === 'gun' && (state.ammo[w.id] || 0) <= 0) {
+      if (window.PV.hud) window.PV.hud.flash('Out of ammo — see Gus for more');
+      state.cooldown = 0.3;
+      return false;
+    }
+    state.cooldown = w.rate;
+    var from = { x: ctx.x, y: (ctx.y || 1.4), z: ctx.z };
+    if (w.kind === 'melee') {
+      window.PV.audio.punch();
+      var target = nearestEnemyInCone(ctx.x, ctx.z, ctx.heading, w.range, 0.9);
+      if (target) damageEnemy(target, w.damage);
+      return true;
+    }
+    // Gun: hitscan with spread per pellet.
+    window.PV.audio.shot();
+    if (state.ammo[w.id] !== Infinity) state.ammo[w.id] -= 1;
+    var pellets = w.pellets || 1;
+    for (var i = 0; i < pellets; i++) {
+      var spread = (Math.random() - 0.5) * 0.12;
+      var aim = ctx.heading + spread;
+      var range = w.range;
+      var hit = null;
+      var hitD = range;
+      enemies.forEach(function (e) {
+        var dx = e.x - ctx.x;
+        var dz = e.z - ctx.z;
+        var d = Math.sqrt(dx * dx + dz * dz);
+        if (d > range) return;
+        if (Math.abs(U.angleDiff(aim, Math.atan2(dx, dz))) > 0.06) return;
+        if (d < hitD) {
+          hitD = d;
+          hit = e;
+        }
+      });
+      var end = {
+        x: ctx.x + Math.sin(aim) * hitD,
+        y: 1.2,
+        z: ctx.z + Math.cos(aim) * hitD,
+      };
+      addTracer(from, end);
+      if (hit) damageEnemy(hit, w.damage);
+    }
+    window.PV.police.addHeat('shooting');
+    return true;
+  }
+
+  /** Enemies chase the player and punch when close. */
+  function update(dt, player) {
+    if (state.cooldown > 0) state.cooldown -= dt;
+    tracers.slice().forEach(function (t) {
+      t.life -= dt;
+      if (t.life <= 0) {
+        sceneRef.remove(t.line);
+        tracers.splice(tracers.indexOf(t), 1);
+      }
+    });
+    enemies.slice().forEach(function (e) {
+      var dx = player.x - e.x;
+      var dz = player.z - e.z;
+      var d = Math.sqrt(dx * dx + dz * dz);
+      if (d > 0.01) {
+        e.x += (dx / d) * e.speed * dt;
+        e.z += (dz / d) * e.speed * dt;
+      }
+      e.mesh.position.set(e.x, 0, e.z);
+      e.mesh.rotation.y = Math.atan2(dx, dz);
+      // Walk bob.
+      e.mesh.position.y = Math.abs(Math.sin(performance.now() * 0.008 + e.x)) * 0.06;
+      if (e.hitFlash > 0) {
+        e.hitFlash -= dt;
+        if (e.hitFlash <= 0) {
+          e.mesh.children.forEach(function (c) {
+            if (c.material && c.material.emissive) c.material.emissive.setHex(0x000000);
+          });
         }
       }
-      const cop = this.game.police.cops.find((c) => c.mesh === obj);
-      if (cop) {
-        const destroyed = this.game.police.hitCop(cop, w.damage);
-        if (destroyed) {
-          this.world.spawnParticles(cop.mesh.position.clone().setY(1.5), 0xff8800, 30, 8, 1.2, 0.8);
-          this.game.audio.crash();
-        }
+      e.attackCd -= dt;
+      if (d < 1.6 && e.attackCd <= 0) {
+        e.attackCd = 0.9;
+        player.damage(12);
+        window.PV.audio.punch();
       }
-    } else {
-      // Miss: spark at the far end of the ray so the shot reads.
-      const end = start.clone().addScaledVector(direction, w.range);
-      end.y = Math.max(end.y, 0.2);
-      this.world.spawnParticles(end, 0xffd24d, 3, 2, 0.2, 0.25);
-      this.game.police.addHeat(3, 'shots fired');
-    }
+    });
   }
 
-  // Melee: a short arc in front of the player, no ammo, no noise.
-  melee(origin, direction) {
-    this.cooldown = WEAPONS.fists.rate;
-    this.game.audio.blip(180, 0.1, 'sine', 0.3);
-    const range = WEAPONS.fists.range;
-    for (const p of this.game.traffic.peds) {
-      if (p.dead) continue;
-      const dx = p.mesh.position.x - origin.x;
-      const dz = p.mesh.position.z - origin.z;
-      const dist = Math.hypot(dx, dz);
-      if (dist < range) {
-        const facing = dx * direction.x + dz * direction.z;
-        if (facing > 0) {
-          p.health -= WEAPONS.fists.damage;
-          this.world.spawnParticles(p.mesh.position.clone().setY(1.4), 0xffffff, 5, 3, 0.3, 0.3);
-          // Deaths are counted once by the traffic update (onPedDeath),
-          // not per hit — see shoot() above.
-          if (p.health <= 0) this.game.police.addHeat(p.hostile ? 8 : 15, 'melee');
-        }
-      }
-    }
+  function clearEnemies() {
+    enemies.slice().forEach(function (e) { sceneRef.remove(e.mesh); });
+    enemies = [];
   }
 
-  // Hostile peds that reach the player hurt them.
-  hostileContact(playerPos, dt) {
-    for (const p of this.game.traffic.peds) {
-      if (!p.hostile || p.dead) continue;
-      const d = Math.hypot(p.mesh.position.x - playerPos.x, p.mesh.position.z - playerPos.z);
-      if (d < 2.2) {
-        this.game.damagePlayer(12 * dt);
-      }
-    }
+  function init(scene) {
+    sceneRef = scene;
+    enemies = [];
+    tracers = [];
+    state.kills = 0;
   }
 
-  update(dt) {
-    this.cooldown = Math.max(0, this.cooldown - dt);
-    this.muzzleTimer = Math.max(0, this.muzzleTimer - dt);
-  }
-
-  serialize() { return { current: this.current, ammo: this.ammo }; }
-  restore(data) {
-    if (!data) return;
-    if (data.current) this.current = data.current;
-    if (data.ammo) this.ammo = { ...this.ammo, ...data.ammo };
-  }
-}
+  window.PV = window.PV || {};
+  window.PV.combat = {
+    weapons: WEAPONS,
+    state: state,
+    init: init,
+    update: update,
+    attack: attack,
+    weapon: weapon,
+    setWeapon: setWeapon,
+    cycleWeapon: cycleWeapon,
+    buyAmmo: buyAmmo,
+    spawnEnemies: spawnEnemies,
+    clearEnemies: clearEnemies,
+    enemies: function () { return enemies; },
+  };
+})();

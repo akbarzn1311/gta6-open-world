@@ -1,239 +1,328 @@
-import * as THREE from 'three';
-// Port Verona v2 — police: the wanted system and its dispatch.
-// Escalation is the genre's spine: patrol cars chase, roadblocks close
-// the road at 3 stars, a helicopter spotlights the player at 4 stars.
+// Port Verona — the wanted system and police dispatch.
+// Stars 1–5. Heat rises with crimes (carjacking, assault, speeding through a
+// chase) and falls when the player stays out of sight. Dispatch escalates:
+// 1–2 stars: patrol cars chase. 3 stars: roadblocks join in. 4–5 stars: the
+// helicopter (SKY-1) tracks from above. Get busted (a cop touches you on
+// foot, or your car is boxed in at low speed) and you lose cash and the
+// mission step resets.
+
 (function () {
   'use strict';
-  var PV = (window.PV = window.PV || {});
-  var T = THREE;
 
-  var UNIT_NAMES = ['OSPREY-11', 'COBRA-25', 'MAKO-18', 'RHINO-45', 'EAGLE-07', 'ORCA-33', 'VIPER-19', 'HERON-52'];
-  var unitSeq = 0;
+  var U = window.PV.util;
 
-  function unitName() {
-    return UNIT_NAMES[unitSeq++ % UNIT_NAMES.length];
-  }
+  var UNITS = ['OSPREY-11', 'COBRA-25', 'MAKO-18', 'RHINO-45', 'EAGLE-07'];
+  var HELI_UNIT = 'SKY-1';
 
-  var Police = {
-    addWanted: function (state, n, reason) {
-      var before = state.wanted;
-      state.wanted = PV.clamp(state.wanted + n, 0, PV.WANTED_MAX);
-      state.lastCrimeAt = state.elapsed;
-      state.hideTimer = 0;
-      if (state.wanted > before) {
-        PV.UI.showToast('WANTED +' + n + ' — ' + (reason || 'crime'));
-        PV.Audio.siren(true);
-      }
-      return state.wanted;
-    },
-
-    // Spawn one patrol car on a road 60-100 m from the player.
-    spawnPatrol: function (state) {
-      var p = state.player;
-      var spot = PV.World.roadPoint(state);
-      for (var tries = 0; tries < 6; tries++) {
-        var dx = spot.x - p.x, dz = spot.z - p.z;
-        var d = Math.sqrt(dx * dx + dz * dz);
-        if (d > 55 && d < 110) break;
-        spot = PV.World.roadPoint(state);
-      }
-      var car = PV.Entities.makeVehicle(state, 'police', spot.x, spot.z, Math.atan2(p.x - spot.x, p.z - spot.z), { police: true });
-      car.unitName = unitName();
-      car.cruise = PV.POLICE_CAR.topSpeed * 0.92;
-      state.policeCars.push(car);
-      state.vehicles.push(car);
-      return car;
-    },
-
-    // Two police cars parked across the road ahead of the player.
-    spawnRoadblock: function (state) {
-      var p = state.player;
-      var ahead = p.mode === 'car' ? 55 : 30;
-      var bx = p.x + Math.sin(p.heading) * ahead;
-      var bz = p.z + Math.cos(p.heading) * ahead;
-      var road = PV.World.nearestRoad(bx, bz);
-      var across = Math.abs(road.x - bx) < Math.abs(road.z - bz) ? 'x' : 'z';
-      var block = [];
-      [-4.5, 4.5].forEach(function (off) {
-        var x = across === 'x' ? road.x + off : road.x;
-        var z = across === 'x' ? road.z : road.z + off;
-        var car = PV.Entities.makeVehicle(state, 'police', x, z, p.heading + Math.PI / 2, { police: true });
-        car.unitName = unitName();
-        car.isRoadblock = true;
-        state.policeCars.push(car);
-        state.vehicles.push(car);
-        block.push(car);
-      });
-      state.roadblocks.push(block);
-      PV.UI.showToast('ROADBLOCK AHEAD');
-      return block;
-    },
-
-    makeHelicopter: function (state) {
-      var g = new T.Group();
-      var bodyMat = new T.MeshStandardMaterial({ color: 0x1f2937, roughness: 0.5, metalness: 0.4 });
-      var body = new T.Mesh(new T.BoxGeometry(2.4, 1.6, 5.2), bodyMat);
-      g.add(body);
-      var tail = new T.Mesh(new T.BoxGeometry(0.6, 0.6, 4.6), bodyMat);
-      tail.position.set(0, 0.3, -4.4);
-      g.add(tail);
-      var rotor = new T.Mesh(new T.BoxGeometry(9, 0.08, 0.5), new T.MeshStandardMaterial({ color: 0x0a0a0a }));
-      rotor.position.y = 1.1;
-      g.add(rotor);
-      var light = new T.Mesh(new T.SphereGeometry(0.4, 8, 6), new T.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2 }));
-      light.position.set(0, -0.9, 1.6);
-      g.add(light);
-      // The spotlight cone, aimed at the player.
-      var cone = new T.Mesh(
-        new T.ConeGeometry(9, 42, 16, 1, true),
-        new T.MeshBasicMaterial({ color: 0xfff8c0, transparent: true, opacity: 0.16, side: T.DoubleSide, depthWrite: false })
-      );
-      cone.position.y = -21;
-      g.add(cone);
-      g.position.set(state.player.x, 42, state.player.z - 20);
-      state.scene.add(g);
-      var heli = { mesh: g, rotor: rotor, unitName: 'SKY-1', x: g.position.x, z: g.position.z, y: 42 };
-      state.helicopter = heli;
-      return heli;
-    },
-
-    update: function (state, dt) {
-      var p = state.player;
-      var wanted = state.wanted;
-
-      // -- spawn to match the wanted level -------------------------------
-      state.spawnTimer -= dt;
-      if (wanted >= 1 && state.policeCars.length < wanted + 1 && state.spawnTimer <= 0) {
-        Police.spawnPatrol(state);
-        state.spawnTimer = 1.6;
-      }
-      if (wanted >= 3 && state.roadblocks.length < 2 && state.roadblockTimer <= 0) {
-        Police.spawnRoadblock(state);
-        state.roadblockTimer = 6;
-      }
-      if (wanted >= 4 && !state.helicopter) {
-        Police.makeHelicopter(state);
-        PV.UI.showToast('VCPD HELICOPTER INBOUND');
-      }
-      if (wanted < 4 && state.helicopter) {
-        state.scene.remove(state.helicopter.mesh);
-        state.helicopter = null;
-      }
-
-      // -- patrol chase AI ------------------------------------------------
-      var nearestPolice = Infinity;
-      for (var i = state.policeCars.length - 1; i >= 0; i--) {
-        var car = state.policeCars[i];
-        if (car.wrecked) {
-          state.policeCars.splice(i, 1);
-          continue;
-        }
-        var dx = p.x - car.x, dz = p.z - car.z;
-        var dist = Math.sqrt(dx * dx + dz * dz);
-        if (dist < nearestPolice) nearestPolice = dist;
-        if (car.isRoadblock) continue; // roadblocks hold their ground
-        var wantHeading = Math.atan2(dx, dz);
-        var dh = wantHeading - car.heading;
-        while (dh > Math.PI) dh -= Math.PI * 2;
-        while (dh < -Math.PI) dh += Math.PI * 2;
-        var throttle = car.speed < car.cruise ? 1 : 0.2;
-        PV.Entities.updateVehicle(state, car, dt, {
-          throttle: throttle,
-          steer: PV.clamp(dh * 2.4, -1, 1),
-          brake: false
-        });
-        // Ram: contact damages the player's car or the player on foot.
-        if (dist < 4.5) {
-          if (p.mode === 'car' && p.vehicle) {
-            PV.Entities.damageVehicle(state, p.vehicle, 6 * dt);
-          } else {
-            Police.hurtPlayer(state, 8 * dt);
-          }
-          if (car.lightBar) car.lightBar.rotation.y = Math.sin(state.elapsed * 14) > 0 ? 0 : 0.2;
-        }
-        // Flashing light bars.
-        if (car.lightBar) {
-          car.lightBar.children[0].material.emissiveIntensity = Math.sin(state.elapsed * 12) > 0 ? 3 : 0.4;
-          car.lightBar.children[1].material.emissiveIntensity = Math.sin(state.elapsed * 12) > 0 ? 0.4 : 3;
-        }
-      }
-
-      // -- helicopter follows the player ----------------------------------
-      if (state.helicopter) {
-        var h = state.helicopter;
-        h.x = PV.lerp(h.x, p.x, PV.clamp(dt * 0.9, 0, 1));
-        h.z = PV.lerp(h.z, p.z, PV.clamp(dt * 0.9, 0, 1));
-        h.mesh.position.set(h.x, 42, h.z);
-        h.rotor.rotation.y += dt * 22;
-        h.mesh.rotation.y = Math.atan2(p.x - h.x, p.z - h.z);
-        if (nearestPolice > 90) nearestPolice = 70; // the eye in the sky sees you
-      }
-
-      // -- wanted decay: hide long enough and the heat falls --------------
-      state.nearestPolice = nearestPolice;
-      if (wanted > 0) {
-        if (nearestPolice > 95) {
-          state.hideTimer += dt;
-          if (state.hideTimer > PV.WANTED_HIDE_DELAY) {
-            state.wanted = Math.max(0, state.wanted - PV.WANTED_DECAY * dt);
-            if (state.wanted === 0) {
-              Police.clearAll(state);
-              PV.UI.showToast('You lost them. Heat is gone.');
-              PV.Audio.siren(false);
-            }
-          }
-        } else {
-          state.hideTimer = 0;
-          state.lastSeen = { x: p.x, z: p.z };
-        }
-      }
-    },
-
-    hurtPlayer: function (state, amount) {
-      var p = state.player;
-      if (p.dead) return;
-      p.health -= amount;
-      if (p.health <= 0) {
-        p.health = 0;
-        p.dead = true;
-        PV.UI.showToast('BUSTED — press R to restart at the plaza');
-        PV.Main.onPlayerDown(state);
-      }
-    },
-
-    clearAll: function (state) {
-      for (var i = state.policeCars.length - 1; i >= 0; i--) {
-        PV.Entities.removeVehicle(state, state.policeCars[i]);
-      }
-      state.policeCars = [];
-      state.roadblocks = [];
-      if (state.helicopter) {
-        state.scene.remove(state.helicopter.mesh);
-        state.helicopter = null;
-      }
-    },
-
-    // The police response panel for the HUD: name, distance, action.
-    units: function (state) {
-      var p = state.player;
-      var list = [];
-      for (var i = 0; i < state.policeCars.length; i++) {
-        var car = state.policeCars[i];
-        var dx = car.x - p.x, dz = car.z - p.z;
-        var dist = Math.round(Math.sqrt(dx * dx + dz * dz));
-        list.push({
-          name: car.unitName || 'VCPD',
-          dist: dist,
-          action: car.isRoadblock ? 'ROADBLOCK' : dist < 12 ? 'RAMMING' : 'PURSUIT'
-        });
-      }
-      if (state.helicopter) {
-        list.push({ name: 'SKY-1', dist: 42, action: 'SPOTLIGHT' });
-      }
-      list.sort(function (a, b) { return a.dist - b.dist; });
-      return list.slice(0, 6);
-    }
+  var state = {
+    stars: 0,
+    heat: 0, // 0..100 within the current star level
+    hiddenTimer: 0,
+    bustedTimer: 0,
   };
 
-  PV.Police = Police;
+  var policeCars = [];
+  var heli = null;
+  var heliMesh = null;
+  var roadblocks = [];
+  var sceneRef = null;
+  var spawnTimer = 0;
+  var sirenOn = false;
+
+  /** Heat added per crime. */
+  var CRIME_HEAT = {
+    carjack: 34,
+    assault: 22,
+    shooting: 40,
+    kill: 30,
+    speeding: 4,
+    hitPed: 26,
+  };
+
+  function addHeat(kind, amount) {
+    var add = amount !== undefined ? amount : CRIME_HEAT[kind] || 10;
+    state.heat += add;
+    while (state.heat >= 100 && state.stars < 5) {
+      state.heat -= 100;
+      state.stars += 1;
+      onStarUp();
+    }
+    if (state.stars >= 5) state.heat = Math.min(state.heat, 99);
+  }
+
+  function setStars(n) {
+    var target = U.clamp(n, 0, 5);
+    while (state.stars < target) {
+      state.stars += 1;
+      onStarUp();
+    }
+    if (target < state.stars) {
+      state.stars = target;
+      state.heat = 0;
+    }
+  }
+
+  function onStarUp() {
+    if (window.PV.hud) window.PV.hud.flash('WANTED LEVEL ' + state.stars + ' — ' + dispatchLine());
+  }
+
+  function dispatchLine() {
+    if (state.stars <= 2) return 'patrol units responding';
+    if (state.stars === 3) return 'roadblocks on Paseo del Mar';
+    return HELI_UNIT + ' overhead — nowhere to hide';
+  }
+
+  function wantedCarCount() {
+    return state.stars <= 1 ? 1 : state.stars === 2 ? 2 : state.stars === 3 ? 3 : 4;
+  }
+
+  function spawnPoliceCar(playerPos, dist) {
+    var a = Math.random() * Math.PI * 2;
+    var d = dist !== undefined ? dist + Math.random() * 10 : 55 + Math.random() * 30;
+    var x = U.clamp(playerPos.x + Math.cos(a) * d, -330, 330);
+    var z = U.clamp(playerPos.z + Math.sin(a) * d, -330, 330);
+    var unit = UNITS[policeCars.length % UNITS.length];
+    var car = window.PV.vehicles.spawnCar('police', 0x1c2733, x, z, Math.atan2(playerPos.x - x, playerPos.z - z), 'police');
+    car.unit = unit;
+    car.policeInput = { forward: true };
+    policeCars.push(car);
+    return car;
+  }
+
+  function spawnHeli(scene, playerPos) {
+    if (heliMesh) return;
+    var g = new THREE.Group();
+    var bodyMat = new THREE.MeshLambertMaterial({ color: 0x223344 });
+    var body = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.4, 6.4), bodyMat);
+    g.add(body);
+    var tail = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.7, 5), bodyMat);
+    tail.position.set(0, 0.3, -5.2);
+    g.add(tail);
+    var rotorMat = new THREE.MeshBasicMaterial({ color: 0x888888 });
+    var rotor = new THREE.Mesh(new THREE.BoxGeometry(11, 0.08, 0.5), rotorMat);
+    rotor.position.y = 1.1;
+    g.add(rotor);
+    g.userData.rotor = rotor;
+    var light = new THREE.Mesh(
+      new THREE.SphereGeometry(0.5, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xffffff })
+    );
+    light.position.y = -0.9;
+    g.add(light);
+    g.position.set(playerPos.x + 20, 42, playerPos.z - 20);
+    scene.add(g);
+    heliMesh = g;
+    heli = { mesh: g, x: g.position.x, z: g.position.z, y: 42, angle: 0 };
+  }
+
+  function removeHeli() {
+    if (heliMesh && sceneRef) sceneRef.remove(heliMesh);
+    heliMesh = null;
+    heli = null;
+  }
+
+  function spawnRoadblock(playerPos) {
+    // A line of two police cars across the road ahead of the player.
+    var ahead = { x: playerPos.x, z: playerPos.z };
+    for (var i = 0; i < 2; i++) {
+      var car = window.PV.vehicles.spawnCar('police', 0x1c2733, ahead.x + (i === 0 ? -4 : 4), ahead.z + 18, 0, 'police');
+      car.unit = 'ROADBLOCK';
+      car.roadblock = true;
+      car.policeInput = { forward: false };
+      roadblocks.push(car);
+    }
+  }
+
+  function clearRoadblocks() {
+    roadblocks.forEach(function (c) {
+      window.PV.vehicles.removeCar(c);
+      var i = policeCars.indexOf(c);
+      if (i >= 0) policeCars.splice(i, 1);
+    });
+    roadblocks = [];
+  }
+
+  /** Staging helper for screenshots: spawn the full dispatch at once. */
+  function stage(playerPos, dist) {
+    var want = wantedCarCount();
+    for (var i = 0; i < want; i++) spawnPoliceCar(playerPos, dist);
+    if (state.stars >= 4) spawnHeli(sceneRef, playerPos);
+  }
+
+  function init(scene) {
+    sceneRef = scene;
+    policeCars = [];
+    roadblocks = [];
+    state.stars = 0;
+    state.heat = 0;
+    state.hiddenTimer = 0;
+  }
+
+  /**
+   * Chase steering: point a police car at the player, ram when close.
+   * Returns the drive input for the car.
+   */
+  function chaseInput(car, target, dt) {
+    var dx = target.x - car.x;
+    var dz = target.z - car.z;
+    var want = Math.atan2(dx, dz);
+    var diff = U.angleDiff(car.heading, want);
+    var input = { forward: true, back: false, left: false, right: false };
+    if (Math.abs(diff) > 0.35) {
+      if (diff > 0) input.left = true;
+      else input.right = true;
+    }
+    if (Math.abs(diff) > 2.4) input.back = true;
+    var dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < 3.2) input.forward = false; // ram: stop pushing, we are on them
+    return input;
+  }
+
+  /**
+   * Tick the wanted system.
+   * ctx: { x, z, inCar, speed, onFoot, dt, wantedVisible (police can see player) }
+   * Returns 'busted' when the player is caught, else null.
+   */
+  function update(dt, ctx) {
+    if (state.stars === 0 && state.heat === 0) {
+      window.PV.audio.setSiren(false);
+      sirenOn = false;
+      return null;
+    }
+    spawnTimer -= dt;
+
+    // Keep the right number of patrol cars.
+    var want = state.stars > 0 ? wantedCarCount() : 0;
+    var active = policeCars.filter(function (c) { return !c.roadblock; });
+    if (active.length < want && spawnTimer <= 0) {
+      spawnPoliceCar(ctx);
+      spawnTimer = 2.5;
+    }
+    if (active.length > want) {
+      var extra = active[active.length - 1];
+      window.PV.vehicles.removeCar(extra);
+      policeCars.splice(policeCars.indexOf(extra), 1);
+    }
+
+    // Roadblocks at 3+ stars, helicopter at 4+.
+    if (state.stars >= 3 && roadblocks.length === 0 && spawnTimer <= -4) {
+      spawnRoadblock(ctx);
+      spawnTimer = 2.5;
+    }
+    if (state.stars >= 4 && !heli) spawnHeli(sceneRef, ctx);
+    if (state.stars < 4 && heli) removeHeli();
+
+    // Siren while any unit is out.
+    var shouldSiren = policeCars.length > 0 || !!heli;
+    if (shouldSiren !== sirenOn) {
+      window.PV.audio.setSiren(shouldSiren);
+      sirenOn = shouldSiren;
+    }
+
+    // Chase.
+    policeCars.forEach(function (car) {
+      if (car.roadblock) return;
+      car.policeInput = chaseInput(car, ctx, dt);
+      // Ram damage: touching the player car slows and damages it.
+      var d = U.dist2(car.x, car.z, ctx.x, ctx.z);
+      if (d < 3.4 && ctx.inCar && ctx.playerCar) {
+        ctx.playerCar.health -= 14 * dt;
+        ctx.playerCar.speed *= 1 - 0.4 * dt;
+      }
+    });
+
+    // Helicopter circles and keeps the player lit.
+    if (heli) {
+      heli.angle += dt * 0.5;
+      heli.x = ctx.x + Math.cos(heli.angle) * 26;
+      heli.z = ctx.z + Math.sin(heli.angle) * 26;
+      heli.mesh.position.set(heli.x, heli.y + Math.sin(performance.now() * 0.002) * 1.5, heli.z);
+      heli.mesh.rotation.y = Math.atan2(ctx.x - heli.x, ctx.z - heli.z);
+      heli.mesh.userData.rotor.rotation.y += dt * 22;
+      state.hiddenTimer = 0; // the heli never loses you
+    }
+
+    // Heat decay: hidden from every unit, the trail goes cold.
+    var nearest = 999;
+    policeCars.forEach(function (car) {
+      nearest = Math.min(nearest, U.dist2(car.x, car.z, ctx.x, ctx.z));
+    });
+    if (nearest > 70 && !heli) {
+      state.hiddenTimer += dt;
+      if (state.hiddenTimer > 6) {
+        state.stars = Math.max(0, state.stars - 1);
+        state.heat = 0;
+        state.hiddenTimer = 0;
+        clearRoadblocks();
+        if (state.stars === 0) {
+          window.PV.audio.setSiren(false);
+          sirenOn = false;
+        }
+      }
+    } else {
+      state.hiddenTimer = 0;
+    }
+
+    // Busted on foot: a cop car within 2.2m catches you.
+    if (!ctx.inCar) {
+      for (var i = 0; i < policeCars.length; i++) {
+        if (U.dist2(policeCars[i].x, policeCars[i].z, ctx.x, ctx.z) < 2.2) {
+          return 'busted';
+        }
+      }
+    }
+    // Busted in a boxed-in car: speed near zero with a cop touching for 3s.
+    if (ctx.inCar && ctx.playerCar) {
+      var touching = policeCars.some(function (c) { return U.dist2(c.x, c.z, ctx.x, ctx.z) < 3.4; });
+      if (touching && Math.abs(ctx.playerCar.speed) < 1) {
+        state.bustedTimer += dt;
+        if (state.bustedTimer > 3) return 'busted';
+      } else {
+        state.bustedTimer = 0;
+      }
+    }
+    return null;
+  }
+
+  function onBusted() {
+    var fine = Math.min(500, 200 + state.stars * 100);
+    state.stars = 0;
+    state.heat = 0;
+    state.hiddenTimer = 0;
+    state.bustedTimer = 0;
+    clearRoadblocks();
+    policeCars.slice().forEach(function (c) { window.PV.vehicles.removeCar(c); });
+    policeCars = [];
+    removeHeli();
+    window.PV.audio.setSiren(false);
+    sirenOn = false;
+    window.PV.audio.busted();
+    return fine;
+  }
+
+  function clearAll() {
+    policeCars.slice().forEach(function (c) { window.PV.vehicles.removeCar(c); });
+    policeCars = [];
+    clearRoadblocks();
+    removeHeli();
+    state.stars = 0;
+    state.heat = 0;
+    window.PV.audio.setSiren(false);
+    sirenOn = false;
+  }
+
+  window.PV = window.PV || {};
+  window.PV.police = {
+    state: state,
+    init: init,
+    update: update,
+    addHeat: addHeat,
+    setStars: setStars,
+    onBusted: onBusted,
+    clearAll: clearAll,
+    stage: stage,
+    units: UNITS,
+    heliUnit: HELI_UNIT,
+    policeCars: function () { return policeCars; },
+  };
 })();

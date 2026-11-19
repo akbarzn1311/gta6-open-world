@@ -1,35 +1,69 @@
-// Save/load: the whole campaign state in one localStorage key, so the
-// game is 100% offline and survives a closed tab. Autosave runs after
-// every mission and every 30 seconds of play; the title screen offers
-// Continue when a save exists.
-//
-// Version 1.1: the save key is v2, so saves from the 1.0 test builds
-// (different weapon/ammo balance) never load into 1.1 by mistake.
-export const SAVE_KEY = 'port-verona.save.v2';
+// Port Verona — save / load via localStorage.
+// One save slot. Stores cash, respect, health, armour, mission progress,
+// garage upgrades, radio station, ammo and the player's last position, so a
+// session can pick up where it left off. Corrupt or missing saves fall back
+// to a fresh game instead of crashing.
 
-export function saveGame(data) {
-  try {
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify({ ...data, savedAt: Date.now() }));
-    return true;
-  } catch {
-    return false; // private windows: the save lasts this visit only
+(function () {
+  'use strict';
+
+  var KEY = 'port-verona-save-v3';
+
+  function save(state) {
+    try {
+      var data = {
+        version: 3,
+        savedAt: new Date().toISOString(),
+        cash: state.cash,
+        respect: state.respect,
+        health: state.health,
+        armor: state.armor,
+        missionIndex: window.PV.missions.state.index,
+        missionsDone: window.PV.missions.state.done.slice(),
+        upgrades: state.upgrades,
+        radio: state.radio,
+        ammo: window.PV.combat.state.ammo,
+        weaponIndex: window.PV.combat.state.weaponIndex,
+        hour: state.hour,
+        x: state.x,
+        z: state.z,
+      };
+      localStorage.setItem(KEY, JSON.stringify(data));
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
-}
 
-export function loadGame() {
-  try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
-    return null;
+  function load() {
+    try {
+      var raw = localStorage.getItem(KEY);
+      if (!raw) return null;
+      var data = JSON.parse(raw);
+      if (!data || data.version !== 3) return null;
+      return data;
+    } catch (e) {
+      return null;
+    }
   }
-}
 
-export function hasSave() {
-  return loadGame() !== null;
-}
+  function clear() {
+    try {
+      localStorage.removeItem(KEY);
+    } catch (e) {
+      // Storage unavailable — nothing to clear.
+    }
+  }
 
-export function clearSave() {
-  try { window.localStorage.removeItem(SAVE_KEY); } catch { /* ignore */ }
-}
+  function hasSave() {
+    return load() !== null;
+  }
+
+  window.PV = window.PV || {};
+  window.PV.save = {
+    save: save,
+    load: load,
+    clear: clear,
+    hasSave: hasSave,
+  };
+})();
