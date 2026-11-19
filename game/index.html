@@ -1,114 +1,139 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Port Verona — Open-World Crime Game</title>
-<!-- Inline SVG favicon (data URI): no extra request, so the game stays
-     100% offline and the browser never 404s on /favicon.ico. -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231c2f6e'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle' fill='%23ffc94d' font-family='sans-serif' font-weight='bold'%3EPV%3C/text%3E%3C/svg%3E">
+<title>Port Verona — open-world crime game</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1526; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #eef1f5; }
-  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .hidden { display: none !important; }
-  /* HUD */
-  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
-  #minimap { position: absolute; top: 14px; right: 14px; width: 190px; height: 190px; border: 2px solid rgba(255,255,255,.35); border-radius: 8px; background: #101418; }
-  #stats { position: absolute; top: 14px; left: 14px; width: 260px; }
-  .bar { height: 14px; background: rgba(0,0,0,.55); border-radius: 7px; overflow: hidden; margin: 4px 0; border: 1px solid rgba(255,255,255,.25); }
-  #health-fill { height: 100%; background: #e5534b; width: 100%; }
-  #armor-fill { height: 100%; background: #4fc3f7; width: 0%; }
-  #health-text, #money, #respect, #stars, #weapon, #radio, #clock, #weather, #speed { text-shadow: 0 1px 3px #000; font-weight: 600; }
-  #money { font-size: 26px; color: #7dd87d; }
-  #stars { font-size: 26px; color: #ffc94d; letter-spacing: 2px; }
-  #stars.hot { color: #ff5544; }
-  #objective { position: absolute; left: 14px; bottom: 64px; max-width: 520px; background: rgba(0,0,0,.55); padding: 10px 14px; border-radius: 8px; font-size: 15px; }
-  #hint { position: absolute; left: 14px; bottom: 14px; font-size: 12.5px; opacity: .85; text-shadow: 0 1px 3px #000; }
-  #speed { position: absolute; right: 16px; bottom: 16px; font-size: 24px; }
-  #crosshair { position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; background: #fff; border-radius: 50%; box-shadow: 0 0 4px #000; }
-  #toast { position: absolute; left: 50%; top: 90px; transform: translateX(-50%); background: rgba(0,0,0,.65); padding: 10px 18px; border-radius: 8px; font-size: 16px; }
-  #dialogue { position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); width: 640px; max-width: 90vw; background: rgba(0,0,0,.7); padding: 14px 18px; border-radius: 10px; border-left: 4px solid #e8a13a; }
-  #dialogue-giver { color: #e8a13a; font-weight: 700; margin-bottom: 4px; }
-  /* Menus */
-  .menu { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: linear-gradient(180deg, rgba(10,16,32,.25), rgba(10,16,32,.88)); }
-  .menu h1 { font-size: 64px; margin: 0; letter-spacing: 2px; color: #ffc94d; text-shadow: 0 4px 24px rgba(0,0,0,.8); }
-  .menu h2 { font-size: 34px; margin: 0 0 10px; color: #ffc94d; }
-  .menu p { max-width: 640px; line-height: 1.5; }
-  .menu button { pointer-events: auto; font-size: 18px; padding: 12px 28px; margin: 6px; border-radius: 8px; border: 1px solid #ffc94d; background: #1a2436; color: #fff; cursor: pointer; }
-  .menu button:hover { background: #2a3a58; }
-  .menu button:disabled { opacity: .45; cursor: default; }
-  .menu .menu-keys { opacity: .8; font-size: 13.5px; }
-  #wheel { position: fixed; left: 50%; top: 50%; transform: translate(-50%,-50%); z-index: 9; width: 340px; height: 340px; pointer-events: none; }
-  .wheel-item { position: absolute; width: 110px; background: rgba(0,0,0,.7); border: 1px solid rgba(255,255,255,.4); border-radius: 8px; padding: 8px; text-align: center; }
-  .wheel-item b { display: block; }
-  .wheel-item span { font-size: 12px; opacity: .8; }
-  .wheel-item.sel { border-color: #ffc94d; background: rgba(232,161,58,.35); }
-  #garage { overflow-y: auto; }
-  #garage-list { width: 520px; max-width: 92vw; text-align: left; }
-  .garage-btn { display: block; width: 100%; text-align: left; }
-  .garage-btn.owned { border-color: #7dd87d; color: #7dd87d; }
-  #version { position: fixed; right: 14px; bottom: 12px; z-index: 11; font-size: 12px; opacity: .6; text-shadow: 0 1px 3px #000; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0e1a; font-family: 'Segoe UI', system-ui, sans-serif; color: #fff; }
+  #game-root { position: fixed; inset: 0; }
+  #game-canvas { position: absolute; inset: 0; }
+  #game-canvas canvas { display: block; }
+
+  /* ---------- HUD ---------- */
+  #hud { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+  .hud-top { position: absolute; top: 14px; right: 18px; text-align: right; }
+  .hud-stars { font-size: 30px; letter-spacing: 4px; text-shadow: 0 2px 6px rgba(0,0,0,.8); }
+  .hud-stars .star { color: rgba(255,255,255,.28); }
+  .hud-stars .star.on { color: #ffd23e; }
+  .hud-cash { font-size: 26px; font-weight: 800; text-shadow: 0 2px 6px rgba(0,0,0,.8); margin-top: 2px; }
+  .hud-cash .respect { display: block; font-size: 12px; letter-spacing: 2px; color: #7ee2a8; font-weight: 700; }
+  .hud-vitals { position: absolute; right: 18px; top: 108px; width: 210px; }
+  .hud-vitals .bar { margin-bottom: 6px; }
+  .hud-vitals label { font-size: 10px; letter-spacing: 2px; color: #cfd6e4; text-shadow: 0 1px 3px #000; }
+  .bar-track { height: 9px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.35); border-radius: 4px; overflow: hidden; }
+  .bar-fill { height: 100%; transition: width .2s; }
+  .bar-fill.health { background: linear-gradient(90deg, #27ae60, #7ee2a8); }
+  .bar-fill.armor { background: linear-gradient(90deg, #2e86c1, #8ec9ee); }
+  .hud-radio { position: absolute; left: 18px; bottom: 18px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,255,255,.25); border-radius: 8px; padding: 8px 12px; }
+  .hud-radio .radio-name { font-weight: 800; font-size: 15px; color: #ffd23e; }
+  .hud-radio .radio-tag { display: block; font-size: 11px; color: #cfd6e4; letter-spacing: 1px; }
+  .hud-radio .radio-car { display: block; font-size: 12px; color: #fff; margin-top: 2px; }
+  .hud-mission { position: absolute; left: 18px; top: 14px; display: flex; gap: 10px; align-items: center; background: rgba(0,0,0,.55); border-left: 4px solid #ffd23e; border-radius: 6px; padding: 8px 12px; max-width: 430px; }
+  .hud-mission .portrait { width: 52px; height: 64px; border-radius: 6px; border: 2px solid rgba(255,255,255,.4); }
+  .hud-mission .mission-title { font-weight: 800; font-size: 15px; }
+  .hud-mission .mission-objective { font-size: 13px; color: #e8ecf3; margin-top: 2px; }
+  .hud-police { position: absolute; left: 18px; top: 118px; display: none; background: rgba(20,0,0,.65); border: 1px solid rgba(255,60,60,.6); border-radius: 6px; padding: 8px 12px; max-width: 340px; }
+  .hud-police .police-title { font-size: 11px; letter-spacing: 2px; color: #ff8a8a; font-weight: 800; }
+  .hud-police .police-body { font-size: 12px; color: #fff; margin-top: 3px; }
+  .hud-map-wrap { position: absolute; right: 18px; bottom: 18px; }
+  .hud-map { border: 2px solid rgba(255,255,255,.4); border-radius: 8px; background: rgba(10,16,26,.85); }
+  .hud-clock { position: absolute; left: 0; right: 0; bottom: -20px; text-align: center; font-size: 12px; font-weight: 700; letter-spacing: 1px; text-shadow: 0 1px 3px #000; }
+  .hud-wheel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; background: rgba(0,0,0,.75); border: 1px solid rgba(255,255,255,.3); border-radius: 10px; padding: 14px 18px; min-width: 300px; }
+  .hud-wheel .wheel-title { font-size: 12px; letter-spacing: 3px; color: #ffd23e; margin-bottom: 8px; font-weight: 800; }
+  .hud-wheel .wheel-item { display: flex; gap: 10px; padding: 5px 6px; border-radius: 5px; font-size: 14px; }
+  .hud-wheel .wheel-item.sel { background: rgba(255,210,62,.25); }
+  .hud-wheel .wheel-ammo { margin-left: auto; color: #cfd6e4; }
+  .hud-banner { position: absolute; left: 50%; top: 22%; transform: translateX(-50%); font-size: 30px; font-weight: 900; letter-spacing: 1px; text-align: center; text-shadow: 0 3px 10px #000; opacity: 0; transition: opacity .3s; color: #ffd23e; white-space: nowrap; }
+  .hud-message { position: absolute; left: 50%; bottom: 110px; transform: translateX(-50%); font-size: 16px; background: rgba(0,0,0,.6); border-radius: 6px; padding: 8px 16px; opacity: 0; transition: opacity .3s; max-width: 640px; text-align: center; }
+  .hud-help { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); font-size: 11px; color: rgba(255,255,255,.65); text-shadow: 0 1px 3px #000; white-space: nowrap; }
+
+  /* ---------- Garage ---------- */
+  .garage-panel { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: none; background: rgba(12,14,22,.94); border: 2px solid #ffd23e; border-radius: 10px; padding: 20px 24px; z-index: 8; min-width: 420px; pointer-events: auto; }
+  .garage-title { font-size: 17px; font-weight: 800; color: #ffd23e; margin-bottom: 12px; }
+  .garage-item { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 8px 0; font-size: 14px; }
+  .garage-item button, .garage-close { pointer-events: auto; cursor: pointer; background: #ffd23e; border: none; border-radius: 5px; padding: 7px 14px; font-weight: 700; font-size: 13px; color: #111; }
+  .garage-item button:disabled { background: #555; color: #aaa; cursor: default; }
+  .garage-close { margin-top: 12px; background: #333; color: #fff; }
+
+  /* ---------- Start / end screens ---------- */
+  .overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 10; background: linear-gradient(160deg, rgba(20,8,30,.82), rgba(60,20,10,.78)); }
+  .overlay-card { text-align: center; max-width: 620px; padding: 30px; }
+  .overlay-card h1 { font-size: 64px; font-weight: 900; letter-spacing: 4px; color: #ffd23e; text-shadow: 0 4px 24px rgba(255,150,40,.5); }
+  .overlay-card h2 { font-size: 18px; letter-spacing: 6px; color: #fff; font-weight: 600; margin-top: 2px; }
+  .overlay-card p { font-size: 15px; line-height: 1.6; color: #e8ecf3; margin: 16px 0; }
+  .overlay-card .controls { font-size: 13px; color: #cfd6e4; line-height: 1.9; margin-bottom: 18px; }
+  .big-button { pointer-events: auto; cursor: pointer; background: #ffd23e; color: #111; border: none; border-radius: 8px; padding: 14px 34px; font-size: 18px; font-weight: 900; letter-spacing: 1px; margin: 4px; }
+  .big-button.secondary { background: rgba(255,255,255,.16); color: #fff; border: 1px solid rgba(255,255,255,.5); }
+  .big-button:hover { filter: brightness(1.1); }
+  #end-screen { display: none; }
+  #end-title { font-size: 52px; }
 </style>
-<script type="importmap">
-{ "imports": { "three": "./vendor/three.min.js" } }
-</script>
 </head>
 <body>
-<canvas id="game" aria-label="Port Verona: an open-world crime game. Drive, steal cars, run missions and lose the police."></canvas>
-<p id="status" role="status" aria-live="polite"></p>
+<div id="game-root">
+  <div id="game-canvas"></div>
+  <div id="hud"></div>
 
-<div id="hud" class="hidden">
-  <canvas id="minimap" width="190" height="190"></canvas>
-  <div id="stats">
-    <div class="bar"><div id="health-fill"></div></div>
-    <div class="bar"><div id="armor-fill"></div></div>
-    <div id="health-text">HP 100</div>
-    <div id="money">$0</div>
-    <div id="respect">Respect 0</div>
-    <div id="stars">☆☆☆☆☆</div>
-    <div id="weapon">Pistol</div>
-    <div id="radio">♪ Sunset FM</div>
-    <div id="clock">17:30</div>
-    <div id="weather">☀ Clear</div>
+  <div id="start-screen" class="overlay">
+    <div class="overlay-card">
+      <h1>PORT VERONA</h1>
+      <h2>AN OPEN-WORLD CRIME GAME</h2>
+      <p>Sunset over the quay. Five stars on your tail. Ten missions, five fixers,
+      one Falcon Astra GT with your name on it. Steal cars, outrun the VCPD,
+      build respect — and take the city.</p>
+      <div class="controls">
+        WASD move / drive &nbsp;·&nbsp; E enter car &nbsp;·&nbsp; Mouse drag to look<br>
+        Click or F attack &nbsp;·&nbsp; Q weapon wheel &nbsp;·&nbsp; 1–5 weapons &nbsp;·&nbsp; R radio<br>
+        G garage (at Sunset Quay) &nbsp;·&nbsp; M mute &nbsp;·&nbsp; P pause &amp; save
+      </div>
+      <button id="start-button" class="big-button">START GAME</button>
+      <button id="continue-button" class="big-button secondary" style="display:none">CONTINUE</button>
+    </div>
   </div>
-  <div id="crosshair"></div>
-  <div id="objective"></div>
-  <div id="hint">WASD move/drive · Mouse camera · E enter/steal car · Q weapon wheel · 1-5 weapons · Click shoot · F interact · R radio · M mission · P save · Esc pause</div>
-  <div id="speed"></div>
-  <div id="toast" class="hidden"></div>
-  <div id="dialogue" class="hidden"><div id="dialogue-giver"></div><div id="dialogue-text"></div></div>
+
+  <div id="end-screen" class="overlay">
+    <div class="overlay-card">
+      <h1 id="end-title">BUSTED</h1>
+      <p id="end-body"></p>
+      <button id="end-button" class="big-button">KEEP PLAYING</button>
+    </div>
+  </div>
 </div>
 
-<div id="title" class="menu">
-  <h1>PORT VERONA</h1>
-  <p>An open-world crime game. Mara Voss owes the harbor crew two grand — and the city is hers to take back. Drive, steal, run missions, lose the VCPD, and own the harbor.</p>
-  <button id="btn-new">New Game</button>
-  <button id="btn-continue" class="hidden">Continue — load save</button>
-  <button id="btn-how">How to play</button>
-  <p class="menu-keys">WASD move &amp; drive · Mouse to look · E enter / steal cars · Q weapon wheel · Click to shoot · F interact · R radio · M missions · P save · Esc pause<br>100% offline — no network, no account, no downloads.</p>
-</div>
-
-<div id="pause" class="menu hidden">
-  <h2>Paused</h2>
-  <button id="btn-resume">Resume</button>
-  <button id="btn-save">Save game</button>
-  <button id="btn-quit">Quit to title</button>
-</div>
-
-<div id="garage" class="menu hidden"></div>
-
-<div id="wheel" class="hidden"></div>
-
-<div id="dead" class="menu hidden">
-  <h2>Busted — Mara is down</h2>
-  <p>The VCPD scraped you off the asphalt. Your last autosave is waiting.</p>
-  <button id="btn-retry">Load last save</button>
-  <button id="btn-dead-title">Quit to title</button>
-</div>
-
-<div id="version">Port Verona v1.1</div>
-
-<script type="module" src="./src/main.js"></script>
+<script src="vendor/three.min.js"></script>
+<script src="src/util.js"></script>
+<script src="src/audio.js"></script>
+<script src="src/city.js"></script>
+<script src="src/vehicles.js"></script>
+<script src="src/characters.js"></script>
+<script src="src/missions.js"></script>
+<script src="src/police.js"></script>
+<script src="src/combat.js"></script>
+<script src="src/hud.js"></script>
+<script src="src/save.js"></script>
+<script src="src/game.js"></script>
+<script src="src/shots.js"></script>
+<script>
+  // Boot: build the world, then show the start screen. Shots (?shot=N) are
+  // staged by shots.js before this runs; normal play waits for the button.
+  (function () {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get('shot')) return; // shots.js already booted the game
+    window.PV.game.init();
+    var continueBtn = document.getElementById('continue-button');
+    if (window.PV.save.hasSave()) {
+      continueBtn.style.display = 'inline-block';
+      continueBtn.onclick = function () {
+        document.getElementById('start-screen').style.display = 'none';
+        window.PV.game.startGame(true);
+      };
+    }
+    window.PV.hud.showStart(function () {
+      window.PV.game.startGame(false);
+    });
+  })();
+</script>
 </body>
 </html>
