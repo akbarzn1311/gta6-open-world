@@ -1,4 +1,4 @@
-// Port Verona (gta6-01 entry, authored in the recorded build session):
+// Port Verona v1.1 (gta6-01 entry, rewritten in the recorded session):
 // a 3D open-world crime game in game/ — three.js city, traffic, police
 // dispatch, 10 story missions, garage, weapon wheel, radio, save/load —
 // handed in by the same plumbing below: copy game/ + screenshots/ to
